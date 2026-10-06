@@ -70,7 +70,22 @@ SET(GL_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/gles.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/glstub.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/math/matheval.c
-	${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_caps.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_vao.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_buffer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_texture.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_fbo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_draw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_attrib.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_uniform.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_query.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_render.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_shader_glsl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_shader_link.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_xfb.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_stubs.c
 )
 
 SET(GL_H
