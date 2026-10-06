@@ -264,7 +264,9 @@ const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
             }
 			return (GLubyte *)renderer_string;
 		case GL_SHADING_LANGUAGE_VERSION:
-            if(globals4es.gl==21)
+            if(globals4es.gl>=30)
+                return (GLubyte *)"1.40 via gl4es";   /* GLSL 1.40 = GL 3.1 */
+            else if(globals4es.gl==21)
             return (GLubyte *)"1.20 via gl4es";
             else if(globals4es.gl==20)
                 return (GLubyte *)"1.10 via gl4es";

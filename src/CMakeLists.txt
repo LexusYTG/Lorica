@@ -70,6 +70,7 @@ SET(GL_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/gles.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/glstub.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/math/matheval.c
+	${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31.c
 )
 
 SET(GL_H
