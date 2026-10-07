@@ -204,7 +204,6 @@ static const char* ext_at(int index)
 
 const GLubyte* gl31_glGetString(GLenum name)
 {
-    static GL31_TLS char renderer[192];
     static GL31_TLS char version[64];
     static GL31_TLS char exts[1536];
     const GLubyte* be;
@@ -214,11 +213,9 @@ const GLubyte* gl31_glGetString(GLenum name)
         case GL_VENDOR:
             return BE(glGetString)(GL_VENDOR);
         case GL_RENDERER:
-            be = BE(glGetString)(GL_RENDERER);
-            snprintf(renderer, sizeof renderer, "%s (Lorica GL31)", be ? (const char*)be : "unknown");
-            return (const GLubyte*)renderer;
+            return BE(glGetString)(GL_RENDERER);
         case GL_VERSION:
-            snprintf(version, sizeof version, "3.%d Lorica (GLES backend)", gl31_advertised_minor());
+            snprintf(version, sizeof version, "3.%d", gl31_advertised_minor());
             return (const GLubyte*)version;
         case GL_SHADING_LANGUAGE_VERSION:
             return (const GLubyte*)(gl31_advertised_minor() >= 2 ? "1.50" : "1.40");

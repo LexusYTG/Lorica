@@ -206,8 +206,9 @@ void initialize_gl4es() {
       case 45:
         break;
       default:
-        // automatic GL version selection
-        globals4es.gl = (globals4es.es==1)?15:21;  // forcing GL 1.5 for es1.1 and GL 2.1 for es2.0
+        // default 3.2 (lo maximo que soporta Lorica). Las apps que no pueden
+        // con 3.x lo bajan via LIBGL_GL=NN en su prefix del launcher.
+        globals4es.gl = (globals4es.es==1) ? 15 : 32;
         break;
     }
 
@@ -383,10 +384,10 @@ void initialize_gl4es() {
         SHUT_LOGD("Override version string with \"%s\" (should be in the form of \"1.x\")\n", env_version);
     }
     if(env_version) {
-        snprintf(globals4es.version, 49, "%s gl4es wrapper %d.%d.%d", env_version, MAJOR, MINOR, REVISION);
+        snprintf(globals4es.version, 49, "%s", env_version);
         SHUT_LOGD("Targeting OpenGL %s\n", env_version);
     } else {
-        snprintf(globals4es.version, 49, "%d.%d gl4es wrapper %d.%d.%d", globals4es.gl/10, globals4es.gl%10, MAJOR, MINOR, REVISION);
+        snprintf(globals4es.version, 49, "%d.%d", globals4es.gl/10, globals4es.gl%10);
         SHUT_LOGD("Targeting OpenGL %d.%d\n", globals4es.gl/10, globals4es.gl%10);
     }
 

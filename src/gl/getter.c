@@ -255,21 +255,21 @@ const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
             return glstate->extensions;
 		case GL_VENDOR:
             if(!vendor_string[0]) {
-                snprintf(vendor_string, 127, "GL4ES wrapping %s", gl4es_original_vendor?gl4es_original_vendor:"an unknown hardware");
+                snprintf(vendor_string, 127, "%s", gl4es_original_vendor?gl4es_original_vendor:"ARM");
             }
 			return (GLubyte *)vendor_string;
 		case GL_RENDERER:
             if(!renderer_string[0]) {
-                snprintf(renderer_string, 127, "GL4ES using %s", gl4es_original_renderer?gl4es_original_renderer:"an unknown renderer");
+                snprintf(renderer_string, 127, "%s", gl4es_original_renderer?gl4es_original_renderer:"unknown");
             }
 			return (GLubyte *)renderer_string;
 		case GL_SHADING_LANGUAGE_VERSION:
             if(globals4es.gl>=30)
-                return (GLubyte *)"1.40 via gl4es";   /* GLSL 1.40 = GL 3.1 */
+                return (GLubyte *)"1.40";   /* GLSL 1.40 = GL 3.1 */
             else if(globals4es.gl==21)
-            return (GLubyte *)"1.20 via gl4es";
+            return (GLubyte *)"1.20";
             else if(globals4es.gl==20)
-                return (GLubyte *)"1.10 via gl4es";
+                return (GLubyte *)"1.10";
 			return (GLubyte *)"";
         case GL_PROGRAM_ERROR_STRING_ARB:
             return (GLubyte*)glstate->glsl->error_msg;
