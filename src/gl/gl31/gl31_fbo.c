@@ -592,3 +592,21 @@ void gl31_glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GL
 {
     gl31_read_pixels_ex(x, y, w, h, format, type, pixels);
 }
+
+/* GL 3.2: adjuntar una textura completa (en capas si es array/cubo/3D). Nativo con
+ * OES/EXT_geometry_shader; sin el, se adjunta la capa 0 como aproximacion. */
+void gl31_glFramebufferTexture(GLenum target, GLenum attachment, GLuint texture, GLint level)
+{
+    if (!attach_prologue(target, attachment)) return;
+    if (level < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (gl31_be.glFramebufferTexture) {
+        BE(glFramebufferTexture)(target, attachment, texture, level);
+        return;
+    }
+    if (texture) gl31_stub_warn("glFramebufferTexture (sin geometry_shader: se adjunta la capa 0)");
+    {
+        GLint ty = 0;
+        (void)ty;
+        BE(glFramebufferTextureLayer)(target, attachment, texture, level, 0);
+    }
+}

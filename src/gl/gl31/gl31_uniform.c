@@ -174,9 +174,20 @@ void gl31_glGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsi
                              GLint* size, GLenum* type, GLchar* name)
 {
     GLsizei len = 0; GLint sz = 0; GLenum ty = 0;
+    char tmp[256];
     if (!prog_for_active(program, GL_ACTIVE_UNIFORMS, index, bufSize)) return;
     if (!name) bufSize = 0;
     BE(glGetActiveUniform)(program, index, bufSize, &len, &sz, &ty, name);
+    if (type) {
+        /* sampler1D / 1DArray / 2DRect: el backend ve 2D / 2DArray; se informa el tipo de la app */
+        const char* nm = name;
+        if (!nm || !*nm) {
+            GLsizei l2 = 0; GLint s2 = 0; GLenum t2 = 0;
+            BE(glGetActiveUniform)(program, index, (GLsizei)sizeof tmp, &l2, &s2, &t2, tmp);
+            nm = tmp;
+        }
+        ty = gl31_program_uniform_type(program, nm, ty);
+    }
     if (length) *length = len;
     if (size)   *size = sz;
     if (type)   *type = ty;

@@ -99,3 +99,47 @@ void gl31_glSamplerParameteri(GLuint s, GLenum pname, GLint v) { BE(glSamplerPar
 void gl31_glSamplerParameterf(GLuint s, GLenum pname, GLfloat v) { BE(glSamplerParameterf)(s, pname, v); }
 GLboolean gl31_glIsSampler(GLuint s) { return BE(glIsSampler)(s); }
 void gl31_glGetSamplerParameteriv(GLuint s, GLenum pname, GLint* v) { BE(glGetSamplerParameteriv)(s, pname, v); }
+
+/* ---- parametros de sampler (vectoriales y enteros sin signo/con signo) ---- */
+void gl31_glSamplerParameteriv(GLuint s, GLenum pname, const GLint* v)
+{
+    if (!v) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glSamplerParameteriv)(s, pname, v);
+}
+void gl31_glSamplerParameterfv(GLuint s, GLenum pname, const GLfloat* v)
+{
+    if (!v) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glSamplerParameterfv)(s, pname, v);
+}
+void gl31_glGetSamplerParameterfv(GLuint s, GLenum pname, GLfloat* v)
+{
+    if (!v) return;
+    BE(glGetSamplerParameterfv)(s, pname, v);
+}
+void gl31_glSamplerParameterIiv(GLuint s, GLenum pname, const GLint* v)
+{
+    if (!gl31_be.glSamplerParameterIiv) {
+        gl31_stub_warn("glSamplerParameterIiv (sin border_clamp en el backend)");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    BE(glSamplerParameterIiv)(s, pname, v);
+}
+void gl31_glSamplerParameterIuiv(GLuint s, GLenum pname, const GLuint* v)
+{
+    if (!gl31_be.glSamplerParameterIuiv) {
+        gl31_stub_warn("glSamplerParameterIuiv (sin border_clamp en el backend)");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    BE(glSamplerParameterIuiv)(s, pname, v);
+}
+/* Los getters Iiv/Iuiv de sampler no existen en el backend: se sirve la ruta entera comun. */
+void gl31_glGetSamplerParameterIiv(GLuint s, GLenum pname, GLint* v)
+{
+    if (v) BE(glGetSamplerParameteriv)(s, pname, v);
+}
+void gl31_glGetSamplerParameterIuiv(GLuint s, GLenum pname, GLuint* v)
+{
+    if (v) BE(glGetSamplerParameteriv)(s, pname, (GLint*)v);
+}

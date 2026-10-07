@@ -86,6 +86,8 @@ void gl31_render_state_defaults(gl31_state_t* s)
     for (i = 0; i < N_SOFT; i++) s->softcap[i] = k_soft[i].def;
     for (i = 0; i < 8; i++) for (k = 0; k < 4; k++) s->colormask[i][k] = GL_TRUE;
     s->pack_alignment = 4;
+    s->unpack_alignment = 4;
+    s->provoking_vertex = GL_LAST_VERTEX_CONVENTION;
     s->point_size = 1.0f;
     s->point_fade_threshold = 1.0f;
     s->point_sprite_origin = GL_UPPER_LEFT;

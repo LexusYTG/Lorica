@@ -7,10 +7,10 @@
 gl31_caps_t    gl31_caps;
 gl31_backend_t gl31_be;
 
-/* Busca `name`, `nameEXT`, `nameOES`, `nameKHR` */
+/* Busca `name`, `nameEXT`, `nameOES`, `nameKHR`, `nameANGLE` */
 static void* load_opt(gl31_loader_fn loader, const char* name)
 {
-    static const char* const sfx[] = { "", "EXT", "OES", "KHR", NULL };
+    static const char* const sfx[] = { "", "EXT", "OES", "KHR", "ANGLE", NULL };
     char buf[96];
     int i;
 
@@ -76,15 +76,47 @@ static void detect_capabilities(void)
             gl31_caps.border_clamp = 1;
         else if (has_ext(e, "GL_EXT_texture_filter_anisotropic", NULL))
             gl31_caps.aniso = 1;
+        else if (has_ext(e, "GL_EXT_draw_elements_base_vertex", "GL_OES_draw_elements_base_vertex"))
+            gl31_caps.base_vertex = 1;
+        else if (has_ext(e, "GL_EXT_geometry_shader", "GL_OES_geometry_shader"))
+            gl31_caps.geometry = 1;
+        else if (has_ext(e, "GL_OES_texture_storage_multisample_2d_array", NULL))
+            gl31_caps.ms_array = 1;
+        else if (has_ext(e, "GL_EXT_provoking_vertex", "GL_ANGLE_provoking_vertex"))
+            gl31_caps.provoking_vertex = 1;
+        else if (has_ext(e, "GL_EXT_depth_clamp", NULL))
+            gl31_caps.depth_clamp = 1;
+        else if (has_ext(e, "GL_EXT_clip_cull_distance", NULL))
+            gl31_caps.clip_distance = 1;
+        else if (has_ext(e, "GL_ANGLE_clip_cull_distance", NULL) && !gl31_caps.clip_distance)
+            gl31_caps.clip_distance = 2;
+        else if (has_ext(e, "GL_EXT_shader_io_blocks", "GL_OES_shader_io_blocks"))
+            gl31_caps.io_blocks_ext = 1;
     }
 
     /* Lo que es core a partir de cierta version de ES */
-    if (gl31_caps.es_major > 3 || (gl31_caps.es_major == 3 && gl31_caps.es_minor >= 1))
+    gl31_caps.glsl_es = 300;
+    if (gl31_caps.es_major > 3 || (gl31_caps.es_major == 3 && gl31_caps.es_minor >= 1)) {
         gl31_caps.level_query = 1;
+        gl31_caps.multisample_tex = 1;
+        gl31_caps.glsl_es = 310;
+    }
     if (gl31_caps.es_major > 3 || (gl31_caps.es_major == 3 && gl31_caps.es_minor >= 2)) {
         gl31_caps.draw_buf_indexed = 1;
         gl31_caps.border_clamp = 1;
         gl31_caps.tex_buffer = 1;
+        gl31_caps.base_vertex = 1;
+        gl31_caps.geometry = 1;
+        gl31_caps.ms_array = 1;
+        gl31_caps.io_blocks_ext = 1;     /* en 3.2 los bloques in/out son core */
+        gl31_caps.glsl_es = 320;
+    }
+    /* geometry shaders, texture buffers y bloques de E/S son extensiones de ES 3.1+ */
+    if (gl31_caps.glsl_es < 310) {
+        gl31_caps.geometry = 0;
+        gl31_caps.tex_buffer = 0;
+        gl31_caps.ms_array = 0;
+        gl31_caps.io_blocks_ext = 0;
     }
 }
 
@@ -138,6 +170,40 @@ int gl31_init(gl31_loader_fn loader)
         LOAD_OPT(glGetTexLevelParameteriv);
         if (!gl31_be.glGetTexLevelParameteriv) gl31_caps.level_query = 0;
     }
+    if (gl31_caps.base_vertex) {
+        LOAD_OPT(glDrawElementsBaseVertex);
+        LOAD_OPT(glDrawRangeElementsBaseVertex);
+        LOAD_OPT(glDrawElementsInstancedBaseVertex);
+        if (!gl31_be.glDrawElementsBaseVertex || !gl31_be.glDrawRangeElementsBaseVertex ||
+            !gl31_be.glDrawElementsInstancedBaseVertex) {
+            gl31_be.glDrawElementsBaseVertex = NULL;
+            gl31_be.glDrawRangeElementsBaseVertex = NULL;
+            gl31_be.glDrawElementsInstancedBaseVertex = NULL;
+            gl31_caps.base_vertex = 0;               /* se emula con punteros de atributos */
+        }
+    }
+    if (gl31_caps.geometry) {
+        LOAD_OPT(glFramebufferTexture);              /* sin esta, solo faltan los attachments en capas */
+    }
+    if (gl31_caps.multisample_tex) {
+        LOAD_OPT(glTexStorage2DMultisample);
+        LOAD_OPT(glGetMultisamplefv);
+        LOAD_OPT(glSampleMaski);
+        if (!gl31_be.glTexStorage2DMultisample || !gl31_be.glGetMultisamplefv || !gl31_be.glSampleMaski) {
+            gl31_be.glTexStorage2DMultisample = NULL;
+            gl31_be.glGetMultisamplefv = NULL;
+            gl31_be.glSampleMaski = NULL;
+            gl31_caps.multisample_tex = 0;
+        }
+    }
+    if (gl31_caps.ms_array) {
+        LOAD_OPT(glTexStorage3DMultisample);
+        if (!gl31_be.glTexStorage3DMultisample) gl31_caps.ms_array = 0;
+    }
+    if (gl31_caps.provoking_vertex) {
+        LOAD_OPT(glProvokingVertex);
+        if (!gl31_be.glProvokingVertex) gl31_caps.provoking_vertex = 0;
+    }
 
     gl31_state_init();
     return 0;
@@ -146,6 +212,8 @@ int gl31_init(gl31_loader_fn loader)
 void gl31_shutdown(void)
 {
     gl31_link_shutdown();
+    gl31_vao_shutdown();
+    gl31_tex_shutdown();
     memset(&gl31_be, 0, sizeof(gl31_be));
     memset(&gl31_caps, 0, sizeof(gl31_caps));
 }

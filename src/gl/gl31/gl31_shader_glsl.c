@@ -1,4 +1,5 @@
-/* gl31_shader_glsl.c - conversor GLSL 1.10-1.50 / 3.30  ->  GLSL ES 3.00
+/* gl31_shader_glsl.c - conversor GLSL 1.10-1.50 / 3.30  ->  GLSL ES 3.00 / 3.10 / 3.20
+ * (la version de salida es la del backend: gl31_caps.glsl_es)
  *
  * Transformaciones (todas textuales, sin AST):
  *   - #version NNN [core]  ->  #version 300 es  + precisiones por defecto
@@ -8,8 +9,14 @@
  *   - GLSL < 1.30: attribute/varying -> in/out ; gl_FragColor/gl_FragData
  *   - texture2D/textureCube/... -> texture/textureLod/...
  *   - noperspective se elimina
- * Se rechaza (error claro) lo que no tiene equivalente: samplers 1D/Rect/Buffer,
- * gl_ClipDistance y built-ins del perfil de compatibilidad (FPE).
+ *   - sampler1D / 1DArray / 2DRect (y variantes i/u) -> sampler2D / 2DArray; las llamadas
+ *     texture/textureLod/texelFetch/textureSize sobre ellos se redirigen a funciones
+ *     auxiliares lorica_* inyectadas en la cabecera (coordenada extra 0.5, o p/size en Rect)
+ *   - samplerBuffer, sampler2DMS, gl_ClipDistance y shaders de geometria: se pasan tal cual
+ *     si el backend los tiene (con el #extension EXT/OES necesario bajo ES 3.20); si no, error
+ *   - glBindFragDataLocation: se inyecta layout(location=N) en las salidas del fragment shader
+ * Se rechaza (error claro) lo que no tiene equivalente: sombras 1D/Rect y built-ins del
+ * perfil de compatibilidad (FPE).
  * Limitacion conocida: no se insertan conversiones implicitas int->float
  * (GLSL >= 1.20 las permite, ES no).
  * Los numeros de linea se conservan (#line 1) para que los logs sean utiles. */
@@ -205,11 +212,9 @@ static char* filter_layouts(const char* s, GLenum type)
 }
 
 /* ---------- tablas ---------- */
+/* siempre sin equivalente: perfil de compatibilidad / FPE y sombras 1D/Rect */
 static const char* const k_unsupported[] = {
-    "sampler1D", "isampler1D", "usampler1D", "sampler1DShadow", "sampler1DArray",
-    "sampler2DRect", "isampler2DRect", "usampler2DRect", "sampler2DRectShadow",
-    "samplerBuffer", "isamplerBuffer", "usamplerBuffer", "sampler2DMS", "gl_ClipDistance",
-    /* perfil de compatibilidad / FPE */
+    "sampler1DShadow", "sampler1DArrayShadow", "sampler2DRectShadow", "samplerCubeArray",
     "gl_Vertex", "gl_Normal", "gl_Color", "gl_SecondaryColor", "gl_MultiTexCoord0",
     "gl_ModelViewMatrix", "gl_ProjectionMatrix", "gl_ModelViewProjectionMatrix",
     "gl_NormalMatrix", "gl_TexCoord", "gl_FogFragCoord", "gl_FrontColor", "gl_BackColor",
@@ -221,25 +226,332 @@ static const char* const k_rename[][2] = {
     { "texture2DLod", "textureLod" },   { "texture2DProjLod", "textureProjLod" },
     { "texture3D", "texture" },         { "texture3DLod", "textureLod" },
     { "textureCube", "texture" },       { "textureCubeLod", "textureLod" },
+    { "texture1D", "texture" },         { "texture1DLod", "textureLod" },
+    { "texture1DArray", "texture" },    { "texture1DArrayLod", "textureLod" },
+    { "texture2DRect", "texture" },
     { NULL, NULL }
 };
 
-#define DEFAULT_PRECISIONS \
-    "precision highp float; precision highp int; precision highp sampler2D; " \
-    "precision highp samplerCube; precision highp sampler3D; precision highp sampler2DArray; " \
-    "precision highp sampler2DShadow; precision highp isampler2D; precision highp usampler2D; "
+/* ---------- samplers que ES no tiene ---------- */
+enum { K_1D, K_1DA, K_RECT, K_COUNT };
+enum { V_F, V_I, V_U };
+
+typedef struct { const char* from; const char* to; int kind, v; GLenum gl; } smp_t;
+static const smp_t k_smp[] = {
+    { "sampler1D",        "sampler2D",       K_1D,   V_F, GL_SAMPLER_1D },
+    { "isampler1D",       "isampler2D",      K_1D,   V_I, GL_INT_SAMPLER_1D },
+    { "usampler1D",       "usampler2D",      K_1D,   V_U, GL_UNSIGNED_INT_SAMPLER_1D },
+    { "sampler1DArray",   "sampler2DArray",  K_1DA,  V_F, GL_SAMPLER_1D_ARRAY },
+    { "isampler1DArray",  "isampler2DArray", K_1DA,  V_I, GL_INT_SAMPLER_1D_ARRAY },
+    { "usampler1DArray",  "usampler2DArray", K_1DA,  V_U, GL_UNSIGNED_INT_SAMPLER_1D_ARRAY },
+    { "sampler2DRect",    "sampler2D",       K_RECT, V_F, GL_SAMPLER_2D_RECT },
+    { "isampler2DRect",   "isampler2D",      K_RECT, V_I, GL_INT_SAMPLER_2D_RECT },
+    { "usampler2DRect",   "usampler2D",      K_RECT, V_U, GL_UNSIGNED_INT_SAMPLER_2D_RECT },
+    { NULL, NULL, 0, 0, 0 }
+};
+
+#define MAX_SMP_NAMES 64
+typedef struct { char name[64]; int kind, v; GLenum gl; } smpname_t;
+typedef struct { smpname_t n[MAX_SMP_NAMES]; int cnt; } smpnames_t;
+
+static const smpname_t* smp_lookup(const smpnames_t* t, const char* nm, size_t len)
+{
+    int i;
+    for (i = 0; i < t->cnt; i++)
+        if (strlen(t->n[i].name) == len && strncmp(t->n[i].name, nm, len) == 0) return &t->n[i];
+    return NULL;
+}
+
+static void skip_ws(const char** p) { while (**p && isspace((unsigned char)**p)) (*p)++; }
+
+/* lee un identificador; devuelve su longitud (0 = no hay) */
+static size_t read_id(const char** p, const char** start)
+{
+    const char* q = *p;
+    skip_ws(&q);
+    *start = q;
+    while (is_id((unsigned char)*q)) q++;
+    *p = q;
+    return (size_t)(q - *start);
+}
+
+/* Recoge los nombres declarados con un tipo de sampler de desktop. 0 = demasiados */
+static int collect_smp_names(const char* s, smpnames_t* t)
+{
+    int k;
+    for (k = 0; k_smp[k].from; k++) {
+        const char* p = s;
+        const char* q;
+        while ((q = find_word(p, k_smp[k].from)) != NULL) {
+            const char* c = q + strlen(k_smp[k].from);
+            const char* nm;
+            size_t nl;
+            p = c;
+            for (;;) {
+                nl = read_id(&c, &nm);
+                if (!nl || nl >= sizeof t->n[0].name) break;
+                if (!smp_lookup(t, nm, nl)) {
+                    if (t->cnt >= MAX_SMP_NAMES) return 0;
+                    memcpy(t->n[t->cnt].name, nm, nl);
+                    t->n[t->cnt].name[nl] = 0;
+                    t->n[t->cnt].kind = k_smp[k].kind;
+                    t->n[t->cnt].v = k_smp[k].v;
+                    t->n[t->cnt].gl = k_smp[k].gl;
+                    t->cnt++;
+                }
+                skip_ws(&c);
+                while (*c == '[') { while (*c && *c != ']') c++; if (*c) c++; skip_ws(&c); }
+                if (*c != ',') break;
+                {   /* otro nombre solo si lo que sigue a la coma es `ident` + , ; ) [ */
+                    const char* d = c + 1;
+                    const char* n2;
+                    size_t l2 = read_id(&d, &n2);
+                    skip_ws(&d);
+                    if (!l2 || !(*d == ',' || *d == ';' || *d == ')' || *d == '[')) break;
+                    c = c + 1;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+static const char* const k_vsfx[] = { "f", "i", "u" };
+static const char* const k_ksfx[] = { "1D", "1DA", "RECT" };
+
+/* Reemplaza fn(NAME, ...) por lorica_fn_KIND_V(NAME, ...) cuando NAME es un sampler reescrito.
+ * `used` marca los (fn, kind, v) usados para generar los auxiliares. Devuelve NULL si
+ * hay un error (msg en *bad) o sin memoria (bad == NULL). */
+enum { F_TEX, F_LOD, F_FETCH, F_SIZE, F_COUNT };
+static const char* const k_fn[F_COUNT] = { "texture", "textureLod", "texelFetch", "textureSize" };
+static const char* const k_fn_unsup[] = { "textureProj", "textureProjLod", "textureGrad", "textureOffset",
+                                          "texelFetchOffset", "textureLodOffset", "textureGather", NULL };
+
+static char* rewrite_calls(char* s, const smpnames_t* t, unsigned char used[F_COUNT][K_COUNT][3],
+                           const char** bad)
+{
+    sb_t b = {0, 0, 0, 0};
+    const char* p = s;
+    int f, any = 0;
+    *bad = NULL;
+    if (!t->cnt) return s;
+    /* funciones sin soporte sobre samplers reescritos */
+    for (f = 0; k_fn_unsup[f]; f++) {
+        const char* q = s;
+        while ((q = find_word(q, k_fn_unsup[f])) != NULL) {
+            const char* c = q + strlen(k_fn_unsup[f]);
+            const char* nm;
+            size_t nl;
+            q = c;
+            skip_ws(&c);
+            if (*c != '(') continue;
+            c++;
+            nl = read_id(&c, &nm);
+            if (nl && smp_lookup(t, nm, nl)) { *bad = k_fn_unsup[f]; free(s); return NULL; }
+        }
+    }
+    while (*p) {
+        /* siguiente aparicion de cualquiera de las 4 funciones */
+        const char* best = NULL;
+        int bf = -1;
+        for (f = 0; f < F_COUNT; f++) {
+            const char* q = find_word(p, k_fn[f]);
+            if (q && (!best || q < best)) { best = q; bf = f; }
+        }
+        if (!best) break;
+        {
+            const char* c = best + strlen(k_fn[bf]);
+            const char* nm;
+            size_t nl;
+            const smpname_t* e = NULL;
+            skip_ws(&c);
+            if (*c == '(') {
+                c++;
+                nl = read_id(&c, &nm);
+                if (nl) e = smp_lookup(t, nm, nl);
+            }
+            sb_cat(&b, p, (size_t)(best - p));
+            if (e) {
+                char nmb[64];
+                snprintf(nmb, sizeof nmb, "lorica_%s_%s_%s", k_fn[bf], k_ksfx[e->kind], k_vsfx[e->v]);
+                sb_str(&b, nmb);
+                used[bf][e->kind][e->v] = 1;
+                any = 1;
+            } else {
+                sb_str(&b, k_fn[bf]);
+            }
+            p = best + strlen(k_fn[bf]);
+        }
+    }
+    sb_str(&b, p);
+    (void)any;
+    free(s);
+    if (b.oom) { free(b.p); return NULL; }
+    return b.p;
+}
+
+/* texto de las funciones auxiliares usadas */
+static void emit_helpers(sb_t* o, unsigned char used[F_COUNT][K_COUNT][3])
+{
+    static const char* const pre[3]  = { "", "i", "u" };
+    static const char* const rty[3]  = { "vec4", "ivec4", "uvec4" };
+    char buf[512];
+    int f, k, v;
+    for (v = 0; v < 3; v++)
+        for (k = 0; k < K_COUNT; k++)
+            for (f = 0; f < F_COUNT; f++) {
+                const char* sty = (k == K_1DA) ? "sampler2DArray" : "sampler2D";
+                const char* nm = k_fn[f];
+                if (!used[f][k][v]) continue;
+#define EMIT(...) do { snprintf(buf, sizeof buf, __VA_ARGS__); sb_str(o, buf); } while (0)
+                if (k == K_1D) {
+                    if (f == F_TEX) {
+                        EMIT("%s lorica_%s_1D_%s(highp %s%s s, float x){return texture(s,vec2(x,0.5));} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                        if (v == V_F)
+                            sb_str(o, "vec4 lorica_texture_1D_f(highp sampler2D s, float x, float b){return texture(s,vec2(x,0.5),b);} ");
+                    } else if (f == F_LOD)
+                        EMIT("%s lorica_%s_1D_%s(highp %s%s s, float x, float l){return textureLod(s,vec2(x,0.5),l);} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else if (f == F_FETCH)
+                        EMIT("%s lorica_%s_1D_%s(highp %s%s s, int p, int l){return texelFetch(s,ivec2(p,0),l);} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else
+                        EMIT("int lorica_%s_1D_%s(highp %s%s s, int l){return textureSize(s,l).x;} ",
+                             nm, k_vsfx[v], pre[v], sty);
+                } else if (k == K_1DA) {
+                    if (f == F_TEX) {
+                        EMIT("%s lorica_%s_1DA_%s(highp %s%s s, vec2 c){return texture(s,vec3(c.x,0.5,c.y));} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                        if (v == V_F)
+                            sb_str(o, "vec4 lorica_texture_1DA_f(highp sampler2DArray s, vec2 c, float b){return texture(s,vec3(c.x,0.5,c.y),b);} ");
+                    } else if (f == F_LOD)
+                        EMIT("%s lorica_%s_1DA_%s(highp %s%s s, vec2 c, float l){return textureLod(s,vec3(c.x,0.5,c.y),l);} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else if (f == F_FETCH)
+                        EMIT("%s lorica_%s_1DA_%s(highp %s%s s, ivec2 p, int l){return texelFetch(s,ivec3(p.x,0,p.y),l);} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else
+                        EMIT("ivec2 lorica_%s_1DA_%s(highp %s%s s, int l){ivec3 z=textureSize(s,l);return ivec2(z.x,z.z);} ",
+                             nm, k_vsfx[v], pre[v], sty);
+                } else {   /* K_RECT: coordenadas sin normalizar, sin mipmaps */
+                    if (f == F_TEX)
+                        EMIT("%s lorica_%s_RECT_%s(highp %s%s s, vec2 p){return texture(s,p/vec2(textureSize(s,0)));} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else if (f == F_FETCH)
+                        EMIT("%s lorica_%s_RECT_%s(highp %s%s s, ivec2 p){return texelFetch(s,p,0);} ",
+                             rty[v], nm, k_vsfx[v], pre[v], sty);
+                    else if (f == F_SIZE)
+                        EMIT("ivec2 lorica_%s_RECT_%s(highp %s%s s){return textureSize(s,0);} ",
+                             nm, k_vsfx[v], pre[v], sty);
+                    /* textureLod sobre Rect no existe en GLSL de escritorio */
+                }
+#undef EMIT
+            }
+}
+
+/* ---------- salidas del fragment shader: layout(location=N) segun glBindFragDataLocation ---------- */
+static const gl31_fragbind_t* find_bind(const gl31_fragbind_t* b, int n, const char* nm, size_t len)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (b[i].name && strlen(b[i].name) == len && strncmp(b[i].name, nm, len) == 0) return &b[i];
+    return NULL;
+}
+
+static char* inject_frag_locations(char* s, const gl31_fragbind_t* binds, int nbinds)
+{
+    sb_t b = {0, 0, 0, 0};
+    const char* p = s;
+    const char* q;
+    if (!binds || nbinds <= 0) return s;
+    while ((q = find_word(p, "out")) != NULL) {
+        /* inicio de la sentencia: tras el ultimo ; { } anterior */
+        const char* st = q;
+        const gl31_fragbind_t* bd = NULL;
+        int has_layout = 0;
+        const char* c;
+        while (st > p && st[-1] != ';' && st[-1] != '{' && st[-1] != '}') st--;
+        {
+            const char* w;
+            for (w = st; w < q; w++)
+                if (strncmp(w, "layout", 6) == 0 && (w == st || !is_id((unsigned char)w[-1]))) has_layout = 1;
+        }
+        /* despues de `out`: [calificadores] tipo nombre[...] */
+        c = q + 3;
+        {
+            const char* w; size_t n; int tok = 0; const char* last = NULL; size_t lastn = 0;
+            for (;;) {
+                n = read_id(&c, &w);
+                if (!n) break;
+                tok++; last = w; lastn = n;
+                skip_ws(&c);
+                if (*c == '[') { while (*c && *c != ']') c++; if (*c) c++; skip_ws(&c); }
+                if (*c == ';' || *c == ',' || *c == '{') break;
+                if (tok > 6) { last = NULL; break; }
+            }
+            if (last && tok >= 2 && *c != '{') bd = find_bind(binds, nbinds, last, lastn);
+        }
+        sb_cat(&b, p, (size_t)(q - p));
+        if (bd && !has_layout) {
+            char tmp[48];
+            snprintf(tmp, sizeof tmp, "layout(location = %u) ", bd->location);
+            sb_str(&b, tmp);
+        }
+        sb_str(&b, "out");
+        p = q + 3;
+    }
+    sb_str(&b, p);
+    free(s);
+    if (b.oom) { free(b.p); return NULL; }
+    return b.p;
+}
+
+/* precision por defecto: solo los tipos que el backend tiene */
+static void emit_precisions(sb_t* o)
+{
+    sb_str(o, "precision highp float; precision highp int; ");
+    sb_str(o, "precision highp sampler2D; precision highp samplerCube; precision highp sampler3D; "
+              "precision highp sampler2DArray; precision highp sampler2DShadow; "
+              "precision highp samplerCubeShadow; precision highp sampler2DArrayShadow; "
+              "precision highp isampler2D; precision highp isampler3D; precision highp isamplerCube; "
+              "precision highp isampler2DArray; precision highp usampler2D; precision highp usampler3D; "
+              "precision highp usamplerCube; precision highp usampler2DArray; ");
+    if (gl31_caps.multisample_tex)
+        sb_str(o, "precision highp sampler2DMS; precision highp isampler2DMS; precision highp usampler2DMS; ");
+    if (gl31_caps.ms_array)
+        sb_str(o, "precision highp sampler2DMSArray; precision highp isampler2DMSArray; "
+                  "precision highp usampler2DMSArray; ");
+    if (gl31_caps.tex_buffer)
+        sb_str(o, "precision highp samplerBuffer; precision highp isamplerBuffer; "
+                  "precision highp usamplerBuffer; ");
+}
+
+static int is_stage(GLenum t)
+{
+    return t == GL_VERTEX_SHADER || t == GL_FRAGMENT_SHADER ||
+           (t == GL_GEOMETRY_SHADER && gl31_caps.geometry);
+}
 
 /* Devuelve memoria malloc'd (free) o NULL y rellena err. */
-char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t errlen)
+char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
+                           const gl31_fragbind_t* binds, int nbinds,
+                           gl31_sampler_info_t* samplers, char* err, size_t errlen)
 {
     char *s = NULL, *p;
     sb_t ext = {0, 0, 0, 0}, o = {0, 0, 0, 0};
     long ver = 110;
-    int i, uses_color = 0, uses_data = 0;
+    int i, uses_color = 0, uses_data = 0, es = gl31_caps.glsl_es ? gl31_caps.glsl_es : 300;
     char num[32];
+    smpnames_t names;
+    unsigned char used[F_COUNT][K_COUNT][3];
+    const char* bad = NULL;
 
+    memset(&names, 0, sizeof names);
+    memset(used, 0, sizeof used);
+    if (samplers) samplers->n = 0;
     if (err && errlen) err[0] = 0;
-    if (!src || (shader_type != GL_VERTEX_SHADER && shader_type != GL_FRAGMENT_SHADER)) {
+    if (!src || !is_stage(shader_type)) {
         set_err(err, errlen, "tipo de shader o fuente invalido", NULL);
         return NULL;
     }
@@ -270,13 +582,32 @@ char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t e
         set_err(err, errlen, "version GLSL no soportada (admitido 110-150, 330)", num);
         goto fail;
     }
+    if (shader_type == GL_GEOMETRY_SHADER && ver < 150) {
+        set_err(err, errlen, "los geometry shaders requieren #version 150", NULL);
+        goto fail;
+    }
 
-    /* --- construcciones sin equivalente --- */
+    /* --- construcciones sin equivalente o que dependen del backend --- */
     for (i = 0; k_unsupported[i]; i++)
         if (find_word(s, k_unsupported[i])) {
-            set_err(err, errlen, "no disponible en GL 3.1 core sobre GLES", k_unsupported[i]);
+            set_err(err, errlen, "no disponible en GL 3.x sobre GLES", k_unsupported[i]);
             goto fail;
         }
+    if (find_word(s, "gl_ClipDistance") && !gl31_caps.clip_distance) {
+        set_err(err, errlen, "gl_ClipDistance requiere EXT_clip_cull_distance en el backend", "gl_ClipDistance");
+        goto fail;
+    }
+    {
+        static const char* const ms[] = { "sampler2DMS", "isampler2DMS", "usampler2DMS", NULL };
+        static const char* const msa[] = { "sampler2DMSArray", "isampler2DMSArray", "usampler2DMSArray", NULL };
+        static const char* const bf[] = { "samplerBuffer", "isamplerBuffer", "usamplerBuffer", NULL };
+        for (i = 0; ms[i]; i++)
+            if (find_word(s, ms[i]) && !gl31_caps.multisample_tex) { set_err(err, errlen, "requiere ES 3.1 en el backend", ms[i]); goto fail; }
+        for (i = 0; msa[i]; i++)
+            if (find_word(s, msa[i]) && !gl31_caps.ms_array) { set_err(err, errlen, "requiere OES_texture_storage_multisample_2d_array", msa[i]); goto fail; }
+        for (i = 0; bf[i]; i++)
+            if (find_word(s, bf[i]) && !gl31_caps.tex_buffer) { set_err(err, errlen, "requiere texture buffers (ES 3.2 o EXT_texture_buffer)", bf[i]); goto fail; }
+    }
     if (shader_type == GL_FRAGMENT_SHADER) {
         uses_color = find_word(s, "gl_FragColor") != NULL;
         uses_data  = find_word(s, "gl_FragData")  != NULL;
@@ -288,6 +619,19 @@ char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t e
 
     process_extensions(s, &ext);
     if (ext.oom) goto oom;
+
+    /* extensiones que el backend exige bajo ES < 3.20 */
+    if (shader_type == GL_GEOMETRY_SHADER && es < 320) sb_str(&ext, "#extension GL_EXT_geometry_shader : require\n");
+    if (es < 320 && gl31_caps.tex_buffer &&
+        (find_word(s, "samplerBuffer") || find_word(s, "isamplerBuffer") || find_word(s, "usamplerBuffer")))
+        sb_str(&ext, "#extension GL_EXT_texture_buffer : require\n");
+    if (find_word(s, "sampler2DMSArray") || find_word(s, "isampler2DMSArray") || find_word(s, "usampler2DMSArray"))
+        sb_str(&ext, "#extension GL_OES_texture_storage_multisample_2d_array : require\n");
+    if (find_word(s, "gl_ClipDistance"))
+        sb_str(&ext, gl31_caps.clip_distance == 2 ? "#extension GL_ANGLE_clip_cull_distance : require\n"
+                                                  : "#extension GL_EXT_clip_cull_distance : require\n");
+    if (es < 320 && gl31_caps.geometry && gl31_caps.io_blocks_ext)
+        sb_str(&ext, "#extension GL_EXT_shader_io_blocks : enable\n");
 
     /* --- palabras clave --- */
     if (ver < 130) {
@@ -304,17 +648,44 @@ char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t e
     if (uses_color && !(s = repl_word(s, "gl_FragColor", "lorica_FragColor"))) goto oom;
     if (uses_data  && !(s = repl_word(s, "gl_FragData",  "lorica_FragData")))  goto oom;
 
+    /* --- samplers 1D / 1DArray / Rect --- */
+    if (!collect_smp_names(s, &names)) {
+        set_err(err, errlen, "demasiados samplers 1D/Rect", NULL);
+        goto fail;
+    }
+    if (names.cnt) {
+        if (samplers)
+            for (i = 0; i < names.cnt && samplers->n < GL31_MAX_SAMPLER_INFO; i++) {
+                memcpy(samplers->s[samplers->n].name, names.n[i].name, sizeof samplers->s[0].name);
+                samplers->s[samplers->n].type = names.n[i].gl;
+                samplers->n++;
+            }
+        s = rewrite_calls(s, &names, used, &bad);
+        if (!s) {
+            if (bad) { set_err(err, errlen, "funcion sin soporte sobre sampler 1D/Rect", bad); goto fail; }
+            goto oom;
+        }
+        for (i = 0; k_smp[i].from; i++)
+            if (!(s = repl_word(s, k_smp[i].from, k_smp[i].to))) goto oom;
+    }
+
     p = filter_layouts(s, shader_type);
     free(s);
     s = p;
     if (!s) goto oom;
+    if (shader_type == GL_FRAGMENT_SHADER && nbinds > 0) {
+        s = inject_frag_locations(s, binds, nbinds);
+        if (!s) goto oom;
+    }
 
     /* --- salida: cabecera ES + #line 1 para conservar numeracion --- */
-    sb_str(&o, "#version 300 es\n");
+    snprintf(num, sizeof num, "#version %d es\n", es);
+    sb_str(&o, num);
     if (ext.n) sb_cat(&o, ext.p, ext.n);
-    sb_str(&o, DEFAULT_PRECISIONS);
+    emit_precisions(&o);
     if (uses_color) sb_str(&o, "layout(location = 0) out highp vec4 lorica_FragColor; ");
     if (uses_data)  sb_str(&o, "layout(location = 0) out highp vec4 lorica_FragData[4]; ");
+    emit_helpers(&o, used);
     sb_str(&o, "\n#line 1\n");
     sb_str(&o, s);
     if (o.oom) goto oom;
@@ -327,4 +698,9 @@ oom:
 fail:
     free(s); free(ext.p); free(o.p);
     return NULL;
+}
+
+char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t errlen)
+{
+    return gl31_glsl_convert_ex(src, shader_type, NULL, 0, NULL, err, errlen);
 }

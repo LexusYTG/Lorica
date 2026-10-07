@@ -99,6 +99,19 @@ static const gl31_entry_t gl31_table[] = {
     /* ---- bloque 2: funciones que existian pero no estaban publicadas ---- */
     D(glGetBooleani_v), D(glPointParameterf), D(glPointParameteri), D(glPointParameterfv),
     D(glPointParameteriv), D(glLogicOp), D(glFramebufferTexture1D), D(glTexStorage1D),
+
+    /* ---- bloque 3: OpenGL 3.0 / 3.1 / 3.2 ---- */
+    D(glClientWaitSync), D(glCompressedTexImage1D), D(glCompressedTexSubImage1D),
+    D(glCopyTexImage1D), D(glCopyTexSubImage1D), D(glDeleteSync),
+    D(glDrawElementsBaseVertex), D(glDrawElementsInstancedBaseVertex),
+    D(glDrawRangeElementsBaseVertex), D(glFenceSync), D(glFramebufferTexture),
+    D(glGetBufferParameteri64v), D(glGetCompressedTexImage), D(glGetInteger64i_v),
+    D(glGetInteger64v), D(glGetMultisamplefv), D(glGetSamplerParameterIiv),
+    D(glGetSamplerParameterIuiv), D(glGetSamplerParameterfv), D(glGetSynciv), D(glIsSync),
+    D(glMultiDrawElementsBaseVertex), D(glProvokingVertex), D(glSampleMaski),
+    D(glSamplerParameterIiv), D(glSamplerParameterIuiv), D(glSamplerParameterfv),
+    D(glSamplerParameteriv), D(glTexImage2DMultisample), D(glTexImage3DMultisample),
+    D(glTexSubImage1D), D(glWaitSync),
 };
 
 void* gl31_get_proc_address(const char* name)

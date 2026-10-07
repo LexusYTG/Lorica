@@ -118,7 +118,7 @@
 #define FACE_LAST  0x851Au   /* GL_TEXTURE_CUBE_MAP_NEGATIVE_Z */
 
 /* slots logicos de binding por unidad */
-enum { S_1D, S_2D, S_RECT, S_3D, S_CUBE, S_1DARR, S_2DARR, S_BUF, S_COUNT };
+enum { S_1D, S_2D, S_RECT, S_3D, S_CUBE, S_1DARR, S_2DARR, S_BUF, S_2DMS, S_2DMSARR, S_COUNT };
 
 typedef struct { GLsizei w, h, d; GLenum ifmt; } lvl_t;   /* 1D array: h = capas */
 typedef struct {
@@ -144,7 +144,8 @@ static int is_proxy(GLenum t)
 {
     return t == GL_PROXY_TEXTURE_1D || t == GL_PROXY_TEXTURE_2D || t == GL_PROXY_TEXTURE_3D ||
            t == GL_PROXY_TEXTURE_CUBE_MAP || t == GL_PROXY_TEXTURE_1D_ARRAY ||
-           t == GL_PROXY_TEXTURE_2D_ARRAY || t == GL_PROXY_TEXTURE_RECTANGLE;
+           t == GL_PROXY_TEXTURE_2D_ARRAY || t == GL_PROXY_TEXTURE_RECTANGLE ||
+           t == GL_PROXY_TEXTURE_2D_MULTISAMPLE || t == GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY;
 }
 
 static int slot_of(GLenum t)
@@ -159,6 +160,8 @@ static int slot_of(GLenum t)
         case GL_TEXTURE_1D_ARRAY: return S_1DARR;
         case GL_TEXTURE_2D_ARRAY: return S_2DARR;
         case GL_TEXTURE_BUFFER:   return S_BUF;
+        case GL_TEXTURE_2D_MULTISAMPLE:       return S_2DMS;
+        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY: return S_2DMSARR;
     }
     return -1;
 }
@@ -175,6 +178,10 @@ GLenum gl31_tex_be_target(GLenum t)
         case GL_TEXTURE_3D:       return GL_TEXTURE_3D;
         case GL_TEXTURE_CUBE_MAP: return GL_TEXTURE_CUBE_MAP;
         case GL_TEXTURE_BUFFER:   return gl31_caps.tex_buffer ? GL_TEXTURE_BUFFER : 0;
+        case GL_TEXTURE_2D_MULTISAMPLE:
+            return gl31_caps.multisample_tex ? GL_TEXTURE_2D_MULTISAMPLE : 0;
+        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
+            return gl31_caps.ms_array ? GL_TEXTURE_2D_MULTISAMPLE_ARRAY : 0;
     }
     return 0;
 }
@@ -183,14 +190,19 @@ GLenum gl31_tex_be_target(GLenum t)
 static int target_param_ok(GLenum t)
 {
     int s = slot_of(t);
-    if (s >= 0 && s != S_BUF && !is_face(t)) return 1;
+    if (s >= 0 && s != S_BUF && s != S_2DMS && s != S_2DMSARR && !is_face(t)) return 1;
     gl31_set_error(GL_INVALID_ENUM);
     return 0;
 }
 
-static void warn_no_texbuf(void)
+static void warn_no_target(GLenum t)
 {
-    gl31_stub_warn("GL_TEXTURE_BUFFER (backend sin texture buffers: ES 3.2 o EXT_texture_buffer)");
+    if (t == GL_TEXTURE_BUFFER)
+        gl31_stub_warn("GL_TEXTURE_BUFFER (backend sin texture buffers: ES 3.2 o EXT_texture_buffer)");
+    else if (t == GL_TEXTURE_2D_MULTISAMPLE)
+        gl31_stub_warn("GL_TEXTURE_2D_MULTISAMPLE (backend sin ES 3.1)");
+    else
+        gl31_stub_warn("GL_TEXTURE_2D_MULTISAMPLE_ARRAY (backend sin OES_texture_storage_multisample_2d_array)");
 }
 
 static int max_levels(GLsizei a, GLsizei b, GLsizei c)
@@ -504,6 +516,8 @@ int gl31_tex_get_binding(GLenum pname, GLint* out)
         case GL_TEXTURE_BINDING_1D_ARRAY:     s = S_1DARR; break;
         case GL_TEXTURE_BINDING_2D_ARRAY:     s = S_2DARR; break;
         case GL_TEXTURE_BINDING_BUFFER:       s = S_BUF; break;
+        case GL_TEXTURE_BINDING_2D_MULTISAMPLE:       s = S_2DMS; break;
+        case GL_TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY: s = S_2DMSARR; break;
         default: return 0;
     }
     *out = (GLint)g_bound[g_active_unit][s];
@@ -539,7 +553,7 @@ void gl31_glBindTexture(GLenum target, GLuint texture)
     int first = 0;
     if (s < 0 || is_face(target)) { gl31_set_error(GL_INVALID_ENUM); return; }
     be = gl31_tex_be_target(target);
-    if (!be) { warn_no_texbuf(); gl31_set_error(GL_INVALID_ENUM); return; }
+    if (!be) { warn_no_target(target); gl31_set_error(GL_INVALID_ENUM); return; }
     if (texture) {
         tex_t* t = tex_get(texture);
         if (!t) { gl31_set_error(GL_OUT_OF_MEMORY); return; }
@@ -766,6 +780,8 @@ static void proxy_set(GLenum target, GLint level, GLsizei w, GLsizei h, GLsizei 
             case GL_PROXY_TEXTURE_CUBE_MAP:  ok = ok && h <= lim && w == h; break;
             case GL_PROXY_TEXTURE_3D:        ok = ok && h <= lim && d <= lim; break;
             case GL_PROXY_TEXTURE_2D_ARRAY:  ok = ok && h <= lim && d <= max_layers(); break;
+            case GL_PROXY_TEXTURE_2D_MULTISAMPLE:       ok = ok && level == 0 && h <= m; break;
+            case GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY: ok = ok && level == 0 && h <= m && d <= max_layers(); break;
             default:                         ok = 0;
         }
     }
@@ -807,7 +823,8 @@ void gl31_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLi
         default: break;
     }
 
-    if (gl31_caps.level_query && !proxy && qt && l->w > 0) {
+    if (gl31_caps.level_query && !proxy && qt &&
+        (l->w > 0 || target == GL_TEXTURE_BUFFER)) {
         BE(glGetTexLevelParameteriv)(qt, level, pname, params);
         return;
     }
@@ -922,6 +939,7 @@ void gl31_glPixelStorei(GLenum pname, GLint param)
                 return;
             }
             if (pname == GL_PACK_ALIGNMENT) s->pack_alignment = param;
+            else s->unpack_alignment = param;
             break;
         case GL_PACK_ROW_LENGTH:   case GL_PACK_SKIP_ROWS:   case GL_PACK_SKIP_PIXELS:
         case GL_UNPACK_ROW_LENGTH: case GL_UNPACK_SKIP_ROWS: case GL_UNPACK_SKIP_PIXELS:
@@ -930,6 +948,11 @@ void gl31_glPixelStorei(GLenum pname, GLint param)
             if (pname == GL_PACK_ROW_LENGTH)       s->pack_row_length = param;
             else if (pname == GL_PACK_SKIP_ROWS)   s->pack_skip_rows = param;
             else if (pname == GL_PACK_SKIP_PIXELS) s->pack_skip_pixels = param;
+            else if (pname == GL_UNPACK_ROW_LENGTH)   s->unpack_row_length = param;
+            else if (pname == GL_UNPACK_SKIP_ROWS)    s->unpack_skip_rows = param;
+            else if (pname == GL_UNPACK_SKIP_PIXELS)  s->unpack_skip_pixels = param;
+            else if (pname == GL_UNPACK_IMAGE_HEIGHT) s->unpack_image_height = param;
+            else if (pname == GL_UNPACK_SKIP_IMAGES)  s->unpack_skip_images = param;
             break;
         case GL_PACK_IMAGE_HEIGHT:
         case GL_PACK_SKIP_IMAGES:                    /* solo lectura 3D: ES no los tiene */
@@ -980,6 +1003,85 @@ static int proxy_2d_family(GLenum t)
            t == GL_PROXY_TEXTURE_1D_ARRAY || t == GL_PROXY_TEXTURE_RECTANGLE;
 }
 
+/* ---------- BGRA ----------
+ * GLES 3.0 no admite GL_BGRA como formato de transferencia. Para subidas de
+ * 4 bytes por pixel se intercambian R y B en CPU y se sube como RGBA. */
+#ifndef GL_BGRA
+#define GL_BGRA 0x80E1
+#endif
+#ifndef GL_UNSIGNED_INT_8_8_8_8_REV
+#define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
+#endif
+typedef struct {
+    void* buf;
+    int   fail, restore;
+    GLint a, rl, sr, sp, ih, si;
+} bgra_t;
+
+static const void* bgra_prepare(GLenum* format, GLenum* type, GLsizei w, GLsizei h, GLsizei d,
+                                const void* pixels, bgra_t* b)
+{
+    gl31_state_t* s = gl31_state();
+    size_t rl, ih, stride, row, k, j, i;
+    const unsigned char* src;
+    unsigned char* dst;
+
+    memset(b, 0, sizeof *b);
+    if (*format != GL_BGRA) return pixels;
+    if (*type == GL_UNSIGNED_INT_8_8_8_8_REV) *type = GL_UNSIGNED_BYTE;
+    if (*type != GL_UNSIGNED_BYTE || s->pixel_unpack_buffer) {
+        gl31_stub_warn(s->pixel_unpack_buffer ? "GL_BGRA con PIXEL_UNPACK_BUFFER"
+                                              : "GL_BGRA con tipo distinto de UNSIGNED_BYTE");
+        gl31_set_error(GL_INVALID_OPERATION);
+        b->fail = 1;
+        return NULL;
+    }
+    *format = GL_RGBA;
+    if (!pixels || w <= 0 || h <= 0 || d <= 0) return pixels;
+
+    rl = s->unpack_row_length > 0 ? (size_t)s->unpack_row_length : (size_t)w;
+    ih = s->unpack_image_height > 0 ? (size_t)s->unpack_image_height : (size_t)h;
+    row = rl * 4u;
+    stride = s->unpack_alignment > 4 ? ((row + 7u) / 8u) * 8u : row;
+    b->buf = malloc((size_t)w * (size_t)h * (size_t)d * 4u);
+    if (!b->buf) { gl31_set_error(GL_OUT_OF_MEMORY); b->fail = 1; return NULL; }
+    src = (const unsigned char*)pixels;
+    dst = (unsigned char*)b->buf;
+    for (k = 0; k < (size_t)d; k++)
+        for (j = 0; j < (size_t)h; j++) {
+            const unsigned char* r = src + (((size_t)s->unpack_skip_images + k) * ih +
+                                            (size_t)s->unpack_skip_rows + j) * stride +
+                                     (size_t)s->unpack_skip_pixels * 4u;
+            for (i = 0; i < (size_t)w; i++, r += 4, dst += 4) {
+                dst[0] = r[2]; dst[1] = r[1]; dst[2] = r[0]; dst[3] = r[3];
+            }
+        }
+    /* el bloque ya esta empaquetado: desactivar el desempaquetado del backend */
+    b->a = s->unpack_alignment; b->rl = s->unpack_row_length; b->sr = s->unpack_skip_rows;
+    b->sp = s->unpack_skip_pixels; b->ih = s->unpack_image_height; b->si = s->unpack_skip_images;
+    BE(glPixelStorei)(GL_UNPACK_ALIGNMENT, 4);
+    BE(glPixelStorei)(GL_UNPACK_ROW_LENGTH, 0);
+    BE(glPixelStorei)(GL_UNPACK_SKIP_ROWS, 0);
+    BE(glPixelStorei)(GL_UNPACK_SKIP_PIXELS, 0);
+    BE(glPixelStorei)(GL_UNPACK_IMAGE_HEIGHT, 0);
+    BE(glPixelStorei)(GL_UNPACK_SKIP_IMAGES, 0);
+    b->restore = 1;
+    return b->buf;
+}
+
+static void bgra_done(bgra_t* b)
+{
+    if (b->restore) {
+        BE(glPixelStorei)(GL_UNPACK_ALIGNMENT, b->a);
+        BE(glPixelStorei)(GL_UNPACK_ROW_LENGTH, b->rl);
+        BE(glPixelStorei)(GL_UNPACK_SKIP_ROWS, b->sr);
+        BE(glPixelStorei)(GL_UNPACK_SKIP_PIXELS, b->sp);
+        BE(glPixelStorei)(GL_UNPACK_IMAGE_HEIGHT, b->ih);
+        BE(glPixelStorei)(GL_UNPACK_SKIP_IMAGES, b->si);
+    }
+    free(b->buf);
+}
+
 void gl31_glTexImage2D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h, GLint border,
                        GLenum format, GLenum type, const void* pixels)
 {
@@ -997,10 +1099,16 @@ void gl31_glTexImage2D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsize
     if (target == GL_TEXTURE_RECTANGLE && level != 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (is_face(target) && w != h) { gl31_set_error(GL_INVALID_VALUE); return; }
 
-    if (target == GL_TEXTURE_1D_ARRAY)
-        BE(glTexImage3D)(GL_TEXTURE_2D_ARRAY, level, (GLint)rf, w, 1, h, 0, format, type, pixels);
-    else
-        BE(glTexImage2D)(gl31_tex_be_target(target), level, (GLint)rf, w, h, 0, format, type, pixels);
+    {
+        bgra_t bg;
+        const void* px = bgra_prepare(&format, &type, w, h, 1, pixels, &bg);
+        if (bg.fail) return;
+        if (target == GL_TEXTURE_1D_ARRAY)
+            BE(glTexImage3D)(GL_TEXTURE_2D_ARRAY, level, (GLint)rf, w, 1, h, 0, format, type, px);
+        else
+            BE(glTexImage2D)(gl31_tex_be_target(target), level, (GLint)rf, w, h, 0, format, type, px);
+        bgra_done(&bg);
+    }
     record_level(target, level, w, h, 1, rf);
 }
 
@@ -1018,7 +1126,13 @@ void gl31_glTexImage3D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsize
         if (border != 0 || w < 0 || h < 0 || d < 0) gl31_set_error(GL_INVALID_VALUE);
         return;
     }
-    BE(glTexImage3D)(target, level, (GLint)rf, w, h, d, 0, format, type, pixels);
+    {
+        bgra_t bg;
+        const void* px = bgra_prepare(&format, &type, w, h, d, pixels, &bg);
+        if (bg.fail) return;
+        BE(glTexImage3D)(target, level, (GLint)rf, w, h, d, 0, format, type, px);
+        bgra_done(&bg);
+    }
     record_level(target, level, w, h, d, rf);
 }
 
@@ -1028,10 +1142,16 @@ void gl31_glTexSubImage2D(GLenum target, GLint level, GLint xo, GLint yo, GLsize
     if (!is_2d_target(target)) { gl31_set_error(GL_INVALID_ENUM); return; }
     if (level < 0 || xo < 0 || yo < 0 || w < 0 || h < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (target == GL_TEXTURE_RECTANGLE && level != 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (target == GL_TEXTURE_1D_ARRAY)       /* yo/h son capa/numero de capas */
-        BE(glTexSubImage3D)(GL_TEXTURE_2D_ARRAY, level, xo, 0, yo, w, 1, h, format, type, pixels);
-    else
-        BE(glTexSubImage2D)(gl31_tex_be_target(target), level, xo, yo, w, h, format, type, pixels);
+    {
+        bgra_t bg;
+        const void* px = bgra_prepare(&format, &type, w, h, 1, pixels, &bg);
+        if (bg.fail) return;
+        if (target == GL_TEXTURE_1D_ARRAY)       /* yo/h son capa/numero de capas */
+            BE(glTexSubImage3D)(GL_TEXTURE_2D_ARRAY, level, xo, 0, yo, w, 1, h, format, type, px);
+        else
+            BE(glTexSubImage2D)(gl31_tex_be_target(target), level, xo, yo, w, h, format, type, px);
+        bgra_done(&bg);
+    }
 }
 
 void gl31_glTexSubImage3D(GLenum target, GLint level, GLint xo, GLint yo, GLint zo, GLsizei w,
@@ -1042,7 +1162,13 @@ void gl31_glTexSubImage3D(GLenum target, GLint level, GLint xo, GLint yo, GLint 
         gl31_set_error(GL_INVALID_VALUE);
         return;
     }
-    BE(glTexSubImage3D)(target, level, xo, yo, zo, w, h, d, format, type, pixels);
+    {
+        bgra_t bg;
+        const void* px = bgra_prepare(&format, &type, w, h, d, pixels, &bg);
+        if (bg.fail) return;
+        BE(glTexSubImage3D)(target, level, xo, yo, zo, w, h, d, format, type, px);
+        bgra_done(&bg);
+    }
 }
 
 /* ---- copia desde el framebuffer de lectura ---- */
@@ -1196,4 +1322,299 @@ void gl31_glGenerateMipmap(GLenum target)
         if (w == p.w && h == p.h && d == p.d) break;       /* ya es 1x1(x1) */
         record_level(target, l, w, h, d, p.ifmt);
     }
+}
+
+/* ==================================================================
+ * Texturas 1D: se almacenan como 2D de alto 1 en el backend.
+ * ================================================================== */
+void gl31_glTexImage1D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLint border,
+                       GLenum format, GLenum type, const void* pixels)
+{
+    GLenum rf = resolve_ifmt(ifmt, type);
+    bgra_t bg;
+    const void* px;
+    if (target == GL_PROXY_TEXTURE_1D) {
+        if (border != 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+        proxy_set(target, level, w, 1, 1, rf);
+        return;
+    }
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (border != 0 || w < 0 || !level_ok(level)) {
+        if (border != 0 || w < 0) gl31_set_error(GL_INVALID_VALUE);
+        return;
+    }
+    px = bgra_prepare(&format, &type, w, 1, 1, pixels, &bg);
+    if (bg.fail) return;
+    BE(glTexImage2D)(GL_TEXTURE_2D, level, (GLint)rf, w, 1, 0, format, type, px);
+    bgra_done(&bg);
+    record_level(GL_TEXTURE_1D, level, w, 1, 1, rf);
+}
+
+void gl31_glTexSubImage1D(GLenum target, GLint level, GLint xo, GLsizei w, GLenum format,
+                          GLenum type, const void* pixels)
+{
+    bgra_t bg;
+    const void* px;
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (level < 0 || xo < 0 || w < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    px = bgra_prepare(&format, &type, w, 1, 1, pixels, &bg);
+    if (bg.fail) return;
+    BE(glTexSubImage2D)(GL_TEXTURE_2D, level, xo, 0, w, 1, format, type, px);
+    bgra_done(&bg);
+}
+
+void gl31_glCopyTexImage1D(GLenum target, GLint level, GLenum ifmt, GLint x, GLint y,
+                           GLsizei w, GLint border)
+{
+    GLenum rf;
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (border != 0 || w < 0 || !level_ok(level)) {
+        if (border != 0 || w < 0) gl31_set_error(GL_INVALID_VALUE);
+        return;
+    }
+    rf = resolve_ifmt((GLint)ifmt, GL_UNSIGNED_BYTE);
+    BE(glCopyTexImage2D)(GL_TEXTURE_2D, level, rf, x, y, w, 1, 0);
+    record_level(GL_TEXTURE_1D, level, w, 1, 1, rf);
+}
+
+void gl31_glCopyTexSubImage1D(GLenum target, GLint level, GLint xo, GLint x, GLint y, GLsizei w)
+{
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (level < 0 || xo < 0 || w < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glCopyTexSubImage2D)(GL_TEXTURE_2D, level, xo, 0, x, y, w, 1);
+}
+
+void gl31_glCompressedTexImage1D(GLenum target, GLint level, GLenum ifmt, GLsizei w, GLint border,
+                                 GLsizei size, const void* data)
+{
+    if (target == GL_PROXY_TEXTURE_1D) {
+        if (border != 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+        proxy_set(target, level, w, 1, 1, ifmt);
+        return;
+    }
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (border != 0 || w < 0 || size < 0 || !level_ok(level)) {
+        if (border != 0 || w < 0 || size < 0) gl31_set_error(GL_INVALID_VALUE);
+        return;
+    }
+    BE(glCompressedTexImage2D)(GL_TEXTURE_2D, level, ifmt, w, 1, 0, size, data);
+    record_level(GL_TEXTURE_1D, level, w, 1, 1, ifmt);
+}
+
+void gl31_glCompressedTexSubImage1D(GLenum target, GLint level, GLint xo, GLsizei w, GLenum format,
+                                    GLsizei size, const void* data)
+{
+    if (target != GL_TEXTURE_1D) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (level < 0 || xo < 0 || w < 0 || size < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glCompressedTexSubImage2D)(GL_TEXTURE_2D, level, xo, 0, w, 1, format, size, data);
+}
+
+/* ==================================================================
+ * Texturas multisample (ES 3.1+; el array requiere OES_texture_storage_multisample_2d_array)
+ * El almacenamiento es inmutable: volver a especificar la misma textura
+ * da GL_INVALID_OPERATION en el backend (en GL de escritorio seria legal).
+ * ================================================================== */
+static int ms_samples_ok(GLsizei samples)
+{
+    GLint m = 4;
+    if (samples < 1) return 0;
+    BE(glGetIntegerv)(GL_MAX_SAMPLES, &m);
+    return samples <= m;
+}
+
+void gl31_glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h,
+                                  GLboolean fixed)
+{
+    GLenum rf = resolve_ifmt((GLint)ifmt, GL_UNSIGNED_BYTE);
+    if (target == GL_PROXY_TEXTURE_2D_MULTISAMPLE) {
+        if (samples < 1) { gl31_set_error(GL_INVALID_VALUE); return; }
+        proxy_set(target, 0, w, h, 1, ms_samples_ok(samples) ? rf : 0);
+        if (!ms_samples_ok(samples)) memset(&g_proxy.l, 0, sizeof g_proxy.l);
+        return;
+    }
+    if (target != GL_TEXTURE_2D_MULTISAMPLE) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (!gl31_caps.multisample_tex) {
+        warn_no_target(target);
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    if (w < 1 || h < 1 || samples < 1) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glTexStorage2DMultisample)(GL_TEXTURE_2D_MULTISAMPLE, samples, rf, w, h, fixed);
+    record_level(GL_TEXTURE_2D_MULTISAMPLE, 0, w, h, 1, rf);
+}
+
+void gl31_glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h,
+                                  GLsizei d, GLboolean fixed)
+{
+    GLenum rf = resolve_ifmt((GLint)ifmt, GL_UNSIGNED_BYTE);
+    if (target == GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY) {
+        if (samples < 1) { gl31_set_error(GL_INVALID_VALUE); return; }
+        proxy_set(target, 0, w, h, d, rf);
+        if (!ms_samples_ok(samples)) memset(&g_proxy.l, 0, sizeof g_proxy.l);
+        return;
+    }
+    if (target != GL_TEXTURE_2D_MULTISAMPLE_ARRAY) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (!gl31_caps.ms_array) {
+        warn_no_target(target);
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    if (w < 1 || h < 1 || d < 1 || samples < 1) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glTexStorage3DMultisample)(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, samples, rf, w, h, d, fixed);
+    record_level(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 0, w, h, d, rf);
+}
+
+void gl31_glGetMultisamplefv(GLenum pname, GLuint index, GLfloat* val)
+{
+    if (pname != GL_SAMPLE_POSITION) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (!val) return;
+    if (!gl31_caps.multisample_tex || !gl31_be.glGetMultisamplefv) {
+        gl31_stub_warn("glGetMultisamplefv (backend sin ES 3.1)");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    BE(glGetMultisamplefv)(pname, index, val);
+}
+
+void gl31_glSampleMaski(GLuint index, GLbitfield mask)
+{
+    if (index >= 1) { gl31_set_error(GL_INVALID_VALUE); return; }    /* MAX_SAMPLE_MASK_WORDS = 1 */
+    if (!gl31_caps.multisample_tex || !gl31_be.glSampleMaski) {
+        gl31_stub_warn("glSampleMaski (backend sin ES 3.1)");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    BE(glSampleMaski)(index, mask);
+}
+
+/* ==================================================================
+ * Texture buffer objects
+ * ================================================================== */
+void gl31_glTexBuffer(GLenum target, GLenum ifmt, GLuint buffer)
+{
+    tex_t* t;
+    if (target != GL_TEXTURE_BUFFER) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (!gl31_caps.tex_buffer || !gl31_be.glTexBuffer) {
+        warn_no_target(target);
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    t = cur_tex(GL_TEXTURE_BUFFER);
+    if (!t) { gl31_set_error(GL_INVALID_OPERATION); return; }
+    BE(glTexBuffer)(GL_TEXTURE_BUFFER, ifmt, buffer);
+    memset(&t->lv[0], 0, sizeof t->lv[0]);
+    if (buffer) {
+        GLint w = 0;
+        t->lv[0].ifmt = ifmt;
+        if (gl31_caps.level_query)
+            BE(glGetTexLevelParameteriv)(GL_TEXTURE_BUFFER, 0, GL_TEXTURE_WIDTH, &w);
+        t->lv[0].w = w; t->lv[0].h = 1; t->lv[0].d = 1;
+    }
+}
+
+/* ==================================================================
+ * glGetTexImage: framebuffer temporal + lectura (con conversion de formato)
+ * ================================================================== */
+static size_t type_bytes(GLenum type)
+{
+    switch (type) {
+        case GL_UNSIGNED_BYTE: case GL_BYTE: return 1;
+        case GL_UNSIGNED_SHORT: case GL_SHORT: case GL_HALF_FLOAT: return 2;
+        case GL_UNSIGNED_INT: case GL_INT: case GL_FLOAT: return 4;
+    }
+    return 0;
+}
+
+static size_t format_comps(GLenum f)
+{
+    switch (f) {
+        case GL_RED: case GL_RED_INTEGER: case GL_ALPHA: case GL_LUMINANCE: return 1;
+        case GL_RG: case GL_RG_INTEGER: case GL_LUMINANCE_ALPHA: return 2;
+        case GL_RGB: case GL_RGB_INTEGER: return 3;
+        case GL_RGBA: case GL_RGBA_INTEGER: return 4;
+    }
+    return 0;
+}
+
+void gl31_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
+{
+    gl31_state_t* st = gl31_state();
+    tex_t* t;
+    lvl_t l;
+    GLint prev_read = 0, prev_tex = 0;
+    GLuint fbo = 0;
+    GLsizei layers, z;
+    size_t pix, rowlen, rowbytes, slice;
+    int s = slot_of(target);
+
+    if (s < 0 || s == S_BUF || s == S_2DMS || s == S_2DMSARR) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (level < 0 || level >= MAX_LV) { gl31_set_error(GL_INVALID_VALUE); return; }
+    t = cur_tex(target);
+    if (!t || t->lv[level].w <= 0) {
+        if (!t) gl31_set_error(GL_INVALID_OPERATION);
+        else gl31_set_error(GL_INVALID_VALUE);
+        return;
+    }
+    l = t->lv[level];
+    if (!pixels && !st->pixel_pack_buffer) return;
+    if (!fmt_lookup(l.ifmt)) {
+        gl31_stub_warn("glGetTexImage(textura comprimida)");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+
+    pix = type_bytes(type) * format_comps(format);
+    if (!pix) pix = 4;                               /* tipos empaquetados / no estandar */
+    rowlen = st->pack_row_length > 0 ? (size_t)st->pack_row_length : (size_t)l.w;
+    rowbytes = rowlen * pix;
+    if (st->pack_alignment > 1) {
+        size_t a = (size_t)st->pack_alignment;
+        rowbytes = ((rowbytes + a - 1) / a) * a;
+    }
+    layers = 1;
+    slice = rowbytes * (size_t)(s == S_1DARR ? 1 : l.h);
+    if (s == S_3D || s == S_2DARR) layers = l.d;
+    if (s == S_1DARR) layers = l.h;
+
+    BE(glGetIntegerv)(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    BE(glGetIntegerv)(GL_TEXTURE_BINDING_2D, &prev_tex);   /* (no se altera, solo documenta) */
+    (void)prev_tex;
+    BE(glGenFramebuffers)(1, &fbo);
+    BE(glBindFramebuffer)(GL_READ_FRAMEBUFFER, fbo);
+
+    for (z = 0; z < layers; z++) {
+        unsigned char* dst = (unsigned char*)pixels + (size_t)z * slice;
+        GLsizei rw = l.w, rh = (s == S_1DARR) ? 1 : l.h;
+        if (s == S_3D || s == S_2DARR || s == S_1DARR)
+            BE(glFramebufferTextureLayer)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, t->id, level, z);
+        else
+            BE(glFramebufferTexture2D)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       is_face(target) ? target : GL_TEXTURE_2D, t->id, level);
+        if (z == 0) {
+            BE(glReadBuffer)(GL_COLOR_ATTACHMENT0);
+            if (BE(glCheckFramebufferStatus)(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                gl31_stub_warn("glGetTexImage(formato no renderizable)");
+                gl31_set_error(GL_INVALID_OPERATION);
+                break;
+            }
+        }
+        if (!gl31_read_pixels_ex(0, 0, rw, rh, format, type, dst)) break;
+    }
+
+    BE(glBindFramebuffer)(GL_READ_FRAMEBUFFER, (GLuint)prev_read);
+    BE(glDeleteFramebuffers)(1, &fbo);
+}
+
+/* La lectura de texturas comprimidas no tiene equivalente en ES. */
+void gl31_glGetCompressedTexImage(GLenum target, GLint level, void* img)
+{
+    (void)target; (void)level; (void)img;
+    gl31_stub_warn("glGetCompressedTexImage");
+    gl31_set_error(GL_INVALID_OPERATION);
+}
+
+void gl31_tex_shutdown(void)
+{
+    free(g_tex);
+    g_tex = NULL; g_nt = g_ct = 0;
 }

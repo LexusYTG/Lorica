@@ -14,6 +14,8 @@ typedef struct {
     char *source, *log;
     GLint compiled;
     int deleted;
+    int has_binds;                 /* el fuente del backend lleva layout(location) de BindFragDataLocation */
+    gl31_sampler_info_t* smp;      /* samplers 1D/Rect reescritos (NULL si no hay) */
 } shader_t;
 
 typedef struct {
@@ -22,6 +24,9 @@ typedef struct {
     GLint linked;
     char* log;
     int deleted;
+    struct { char name[64]; GLuint loc; } fb[16];   /* glBindFragDataLocation */
+    int nfb;
+    gl31_sampler_info_t smp;       /* tipos de desktop de los samplers del programa */
 } prog_t;
 
 static shader_t* g_sh; static size_t g_nsh, g_csh;
@@ -61,7 +66,7 @@ static shader_t* sh_add(GLuint id, GLenum type)
         }
         s = &g_sh[g_nsh++];
     } else {
-        free(s->source); free(s->log);
+        free(s->source); free(s->log); free(s->smp);
     }
     memset(s, 0, sizeof *s);
     s->id = id; s->type = type;
@@ -70,7 +75,7 @@ static shader_t* sh_add(GLuint id, GLenum type)
 
 static void sh_free_at(size_t i)
 {
-    free(g_sh[i].source); free(g_sh[i].log);
+    free(g_sh[i].source); free(g_sh[i].log); free(g_sh[i].smp);
     g_sh[i] = g_sh[--g_nsh];
 }
 
@@ -153,7 +158,7 @@ static char* backend_log(int is_shader, GLuint id)
 void gl31_link_shutdown(void)
 {
     size_t i;
-    for (i = 0; i < g_nsh; i++) { free(g_sh[i].source); free(g_sh[i].log); }
+    for (i = 0; i < g_nsh; i++) { free(g_sh[i].source); free(g_sh[i].log); free(g_sh[i].smp); }
     for (i = 0; i < g_npr; i++) free(g_pr[i].log);
     free(g_sh); free(g_pr);
     g_sh = NULL; g_nsh = g_csh = 0;
@@ -164,8 +169,13 @@ void gl31_link_shutdown(void)
 GLuint gl31_glCreateShader(GLenum type)
 {
     GLuint id;
-    /* GL 3.1 solo tiene vertex y fragment (geometry llega en 3.2) */
-    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER) {
+    /* geometry shaders: GL 3.2, solo si el backend los tiene (ES 3.2 o EXT_geometry_shader) */
+    if (type == GL_GEOMETRY_SHADER && !gl31_caps.geometry) {
+        gl31_stub_warn("GL_GEOMETRY_SHADER (backend sin geometry shaders)");
+        gl31_set_error(GL_INVALID_ENUM);
+        return 0;
+    }
+    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER && type != GL_GEOMETRY_SHADER) {
         gl31_set_error(GL_INVALID_ENUM);
         return 0;
     }
@@ -214,8 +224,17 @@ void gl31_glCompileShader(GLuint shader)
         set_str(&sh->log, "ERROR: 0:0: sin codigo fuente");
         return;
     }
-    conv = gl31_glsl_convert(sh->source, sh->type, err, sizeof err);
-    if (!conv) { set_str(&sh->log, err); return; }
+    {
+        gl31_sampler_info_t info;
+        memset(&info, 0, sizeof info);
+        conv = gl31_glsl_convert_ex(sh->source, sh->type, NULL, 0, &info, err, sizeof err);
+        if (!conv) { set_str(&sh->log, err); return; }
+        free(sh->smp);
+        sh->smp = NULL;
+        sh->has_binds = 0;
+        if (info.n > 0 && (sh->smp = (gl31_sampler_info_t*)malloc(sizeof *sh->smp)) != NULL)
+            *sh->smp = info;
+    }
     BE(glShaderSource)(shader, 1, (const GLchar* const*)&conv, NULL);
     BE(glCompileShader)(shader);
     BE(glGetShaderiv)(shader, GL_COMPILE_STATUS, &ok);
@@ -316,6 +335,39 @@ void gl31_glLinkProgram(GLuint program)
             return;
         }
     }
+    /* glBindFragDataLocation: GLES solo admite layout(location) en el shader, asi que los
+     * fragment shaders se reconvierten con las ubicaciones pedidas antes de linkear */
+    for (k = 0; k < p->natt; k++) {
+        shader_t* sh = sh_find(p->att[k]);
+        gl31_fragbind_t fb[16];
+        char err[512];
+        char* conv;
+        int n;
+        if (!sh || sh->type != GL_FRAGMENT_SHADER || !sh->source) continue;
+        if (!p->nfb && !sh->has_binds) continue;
+        for (n = 0; n < p->nfb; n++) { fb[n].name = p->fb[n].name; fb[n].location = p->fb[n].loc; }
+        conv = gl31_glsl_convert_ex(sh->source, sh->type, fb, p->nfb, NULL, err, sizeof err);
+        if (!conv) { set_str(&p->log, err); return; }
+        BE(glShaderSource)(sh->id, 1, (const GLchar* const*)&conv, NULL);
+        BE(glCompileShader)(sh->id);
+        BE(glGetShaderiv)(sh->id, GL_COMPILE_STATUS, &ok);
+        free(conv);
+        sh->has_binds = p->nfb > 0;
+        if (!ok) {
+            free(p->log);
+            p->log = backend_log(1, sh->id);
+            sh->compiled = 0;
+            return;
+        }
+    }
+    p->smp.n = 0;
+    for (k = 0; k < p->natt; k++) {
+        shader_t* sh = sh_find(p->att[k]);
+        int j;
+        if (!sh || !sh->smp) continue;
+        for (j = 0; j < sh->smp->n && p->smp.n < GL31_MAX_SAMPLER_INFO; j++)
+            p->smp.s[p->smp.n++] = sh->smp->s[j];
+    }
     BE(glLinkProgram)(program);
     BE(glGetProgramiv)(program, GL_LINK_STATUS, &ok);
     p->linked = ok;
@@ -414,13 +466,48 @@ int gl31_program_status(GLuint program)
     return sh_find(program) ? -2 : -1;
 }
 
-/* Tipo de sampler tal como lo declaro la app. El conversor GLSL (gl31_shader_glsl.c)
- * rechaza sampler1D/2DRect/Buffer, asi que todo sampler que llega aqui existe en ES
- * y el tipo del backend es el de la app. */
+/* Tipo de sampler tal como lo declaro la app. Los sampler1D / 1DArray / 2DRect se reescriben
+ * a 2D / 2DArray en el backend; aqui se recupera su tipo de desktop por nombre. */
 GLenum gl31_program_sampler_type(GLuint program, const char* uniform_name, GLenum backend_type)
 {
-    (void)program; (void)uniform_name;
+    prog_t* p = pr_find(program);
+    char base[64];
+    size_t n;
+    int i;
+    if (!p || !uniform_name || !p->smp.n) return backend_type;
+    n = strlen(uniform_name);
+    if (n > 3 && strcmp(uniform_name + n - 3, "[0]") == 0) n -= 3;
+    if (n >= sizeof base) return backend_type;
+    memcpy(base, uniform_name, n);
+    base[n] = 0;
+    for (i = 0; i < p->smp.n; i++)
+        if (strcmp(p->smp.s[i].name, base) == 0) return p->smp.s[i].type;
     return backend_type;
+}
+
+GLenum gl31_program_uniform_type(GLuint program, const char* uniform_name, GLenum backend_type)
+{
+    return gl31_program_sampler_type(program, uniform_name, backend_type);
+}
+
+/* GL 3.0: asocia una salida del fragment shader a un color attachment */
+void gl31_glBindFragDataLocation(GLuint program, GLuint color, const GLchar* name)
+{
+    prog_t* p = pr_find(program);
+    GLint max = 4;
+    int i;
+    if (!p || !name) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (strncmp(name, "gl_", 3) == 0 || strlen(name) >= sizeof p->fb[0].name) {
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    BE(glGetIntegerv)(GL_MAX_DRAW_BUFFERS, &max);
+    if ((GLint)color >= max) { gl31_set_error(GL_INVALID_VALUE); return; }
+    for (i = 0; i < p->nfb; i++)
+        if (strcmp(p->fb[i].name, name) == 0) { p->fb[i].loc = color; return; }
+    if (p->nfb >= 16) { gl31_set_error(GL_OUT_OF_MEMORY); return; }
+    strcpy(p->fb[p->nfb].name, name);
+    p->fb[p->nfb++].loc = color;       /* surte efecto en el proximo glLinkProgram */
 }
 
 /* ---------- consultas de objetos (se sirven de las tablas propias: el backend

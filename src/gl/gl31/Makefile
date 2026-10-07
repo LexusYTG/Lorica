@@ -24,6 +24,7 @@ SOURCES = \
 	gl31_shader_glsl.c \
 	gl31_shader_link.c \
 	gl31_state.c \
+	gl31_sync.c \
 	gl31_stubs.c \
 	gl31_texture.c \
 	gl31_uniform.c \
@@ -59,7 +60,7 @@ $(SHARED_LIB): $(OBJECTS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 # ---- pruebas ----
-TESTS = tests/test_uniform tests/test_integration
+TESTS = tests/test_uniform tests/test_integration tests/test_gl32
 
 tests/%: tests/%.c gl31.h $(STATIC_LIB)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. $< $(STATIC_LIB) -lpthread -o $@

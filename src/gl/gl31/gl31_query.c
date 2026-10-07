@@ -150,20 +150,65 @@ void gl31_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
     *params = (v > (GLuint)INT_MAX) ? INT_MAX : (GLint)v;
 }
 
-/* ---------- strings / limites que ve la app ---------- */
-static const char* const k_ext[] = {
-    "GL_ARB_vertex_array_object", "GL_ARB_uniform_buffer_object", "GL_ARB_copy_buffer",
-    "GL_ARB_sampler_objects", "GL_ARB_map_buffer_range", "GL_ARB_texture_storage",
-    "GL_ARB_draw_instanced", "GL_ARB_instanced_arrays",
+/* ---------- version / extensiones que ve la app ----------
+ * GL 3.2 exige geometry shaders: solo se anuncia si el backend los tiene
+ * (ES 3.2 o EXT/OES_geometry_shader). Si no, se anuncia 3.1. */
+int gl31_advertised_minor(void) { return gl31_caps.geometry ? 2 : 1; }
+
+typedef struct { const char* name; int (*ok)(void); } ext_t;
+static int x_always(void)  { return 1; }
+static int x_texbuf(void)  { return gl31_caps.tex_buffer; }
+static int x_ms(void)      { return gl31_caps.multisample_tex; }
+static int x_prov(void)    { return gl31_caps.provoking_vertex; }
+static int x_clamp(void)   { return gl31_caps.depth_clamp; }
+static int x_aniso(void)   { return gl31_caps.aniso; }
+static int x_clipd(void)   { return gl31_caps.clip_distance != 0; }
+
+static const ext_t k_ext[] = {
+    { "GL_ARB_vertex_array_object",       x_always },
+    { "GL_ARB_uniform_buffer_object",     x_always },
+    { "GL_ARB_copy_buffer",               x_always },
+    { "GL_ARB_sampler_objects",           x_always },
+    { "GL_ARB_map_buffer_range",          x_always },
+    { "GL_ARB_texture_storage",           x_always },
+    { "GL_ARB_draw_instanced",            x_always },
+    { "GL_ARB_instanced_arrays",          x_always },
+    { "GL_ARB_framebuffer_object",        x_always },
+    { "GL_ARB_sync",                      x_always },
+    { "GL_ARB_draw_elements_base_vertex", x_always },   /* nativo o emulado */
+    { "GL_ARB_seamless_cube_map",         x_always },   /* ES siempre es seamless */
+    { "GL_ARB_texture_rectangle",         x_always },   /* emulado sobre 2D */
+    { "GL_ARB_texture_buffer_object",     x_texbuf },
+    { "GL_ARB_texture_multisample",       x_ms },
+    { "GL_ARB_provoking_vertex",          x_prov },
+    { "GL_ARB_depth_clamp",               x_clamp },
+    { "GL_EXT_texture_filter_anisotropic", x_aniso },
+    { "GL_EXT_clip_cull_distance",        x_clipd },
 };
-#define N_EXT ((GLint)(sizeof(k_ext) / sizeof(k_ext[0])))
+#define N_EXT_ALL ((int)(sizeof(k_ext) / sizeof(k_ext[0])))
+
+static int ext_count(void)
+{
+    int i, n = 0;
+    for (i = 0; i < N_EXT_ALL; i++) if (k_ext[i].ok()) n++;
+    return n;
+}
+
+static const char* ext_at(int index)
+{
+    int i, n = 0;
+    for (i = 0; i < N_EXT_ALL; i++)
+        if (k_ext[i].ok()) { if (n++ == index) return k_ext[i].name; }
+    return NULL;
+}
 
 const GLubyte* gl31_glGetString(GLenum name)
 {
     static GL31_TLS char renderer[192];
-    static GL31_TLS char exts[512];
+    static GL31_TLS char version[64];
+    static GL31_TLS char exts[1536];
     const GLubyte* be;
-    int i; size_t n;
+    int i, n, w;
 
     switch (name) {
         case GL_VENDOR:
@@ -173,18 +218,20 @@ const GLubyte* gl31_glGetString(GLenum name)
             snprintf(renderer, sizeof renderer, "%s (Lorica GL31)", be ? (const char*)be : "unknown");
             return (const GLubyte*)renderer;
         case GL_VERSION:
-            return (const GLubyte*)"3.1 Lorica (GLES backend)";
+            snprintf(version, sizeof version, "3.%d Lorica (GLES backend)", gl31_advertised_minor());
+            return (const GLubyte*)version;
         case GL_SHADING_LANGUAGE_VERSION:
-            return (const GLubyte*)"1.40";
-        case GL_EXTENSIONS:
-            if (!exts[0]) {
-                for (i = 0, n = 0; i < N_EXT; i++) {
-                    int w = snprintf(exts + n, sizeof exts - n, "%s%s", i ? " " : "", k_ext[i]);
-                    if (w < 0 || (size_t)w >= sizeof exts - n) break;
-                    n += (size_t)w;
-                }
+            return (const GLubyte*)(gl31_advertised_minor() >= 2 ? "1.50" : "1.40");
+        case GL_EXTENSIONS: {
+            size_t len = 0;
+            exts[0] = 0;
+            for (i = 0, n = ext_count(); i < n; i++) {
+                w = snprintf(exts + len, sizeof exts - len, "%s%s", i ? " " : "", ext_at(i));
+                if (w < 0 || (size_t)w >= sizeof exts - len) break;
+                len += (size_t)w;
             }
             return (const GLubyte*)exts;
+        }
         default:
             gl31_set_error(GL_INVALID_ENUM);
             return NULL;
@@ -193,31 +240,78 @@ const GLubyte* gl31_glGetString(GLenum name)
 
 const GLubyte* gl31_glGetStringi(GLenum name, GLuint index)
 {
+    const char* e;
     if (name != GL_EXTENSIONS) { gl31_set_error(GL_INVALID_ENUM); return NULL; }
-    if ((GLint)index >= N_EXT || (GLint)index < 0) { gl31_set_error(GL_INVALID_VALUE); return NULL; }
-    return (const GLubyte*)k_ext[index];
+    if ((GLint)index < 0 || (GLint)index >= ext_count()) { gl31_set_error(GL_INVALID_VALUE); return NULL; }
+    e = ext_at((int)index);
+    return (const GLubyte*)e;
+}
+
+/* Valores que Lorica sirve desde su propio estado. 1 = servido en *out. */
+static int local_integer(GLenum pname, GLint* out)
+{
+    gl31_state_t* s;
+    GLboolean b;
+    switch (pname) {
+        case GL_MAJOR_VERSION:           *out = 3; return 1;
+        case GL_MINOR_VERSION:           *out = gl31_advertised_minor(); return 1;
+        case GL_NUM_EXTENSIONS:          *out = ext_count(); return 1;
+        case GL_CONTEXT_PROFILE_MASK:    *out = GL_CONTEXT_CORE_PROFILE_BIT; return 1;
+        case GL_CONTEXT_FLAGS:           *out = 0; return 1;
+        case GL_MAX_TEXTURE_BUFFER_SIZE:
+            if (gl31_caps.tex_buffer) return 0;      /* lo sabe el backend */
+            *out = 0; return 1;
+        case GL_MAX_RECTANGLE_TEXTURE_SIZE:
+            BE(glGetIntegerv)(GL_MAX_TEXTURE_SIZE, out);
+            return 1;
+        default: break;
+    }
+    s = gl31_state();
+    switch (pname) {
+        case GL_PRIMITIVE_RESTART:         *out = s->prim_restart; return 1;
+        case GL_PRIMITIVE_RESTART_INDEX:   *out = (GLint)s->prim_restart_index; return 1;
+        case GL_POINT_SPRITE_COORD_ORIGIN: *out = (GLint)s->point_sprite_origin; return 1;
+        case GL_PROVOKING_VERTEX:          *out = (GLint)s->provoking_vertex; return 1;
+        case GL_DRAW_FRAMEBUFFER_BINDING:  *out = (GLint)s->draw_fbo; return 1;
+        case GL_READ_FRAMEBUFFER_BINDING:  *out = (GLint)s->read_fbo; return 1;
+        default: break;
+    }
+    if (gl31_tex_get_binding(pname, out)) return 1;          /* TEXTURE_BINDING_1D/RECT/... */
+    if (gl31_soft_cap_get(pname, &b)) { *out = b; return 1; }
+    return 0;
 }
 
 void gl31_glGetIntegerv(GLenum pname, GLint* data)
 {
     if (!data) return;
-    switch (pname) {
-        case GL_MAJOR_VERSION:           *data = 3; return;
-        case GL_MINOR_VERSION:           *data = 1; return;
-        case GL_NUM_EXTENSIONS:          *data = N_EXT; return;
-        case GL_PRIMITIVE_RESTART_INDEX: *data = (GLint)gl31_state()->prim_restart_index; return;
-        case GL_MAX_TEXTURE_BUFFER_SIZE: *data = 0; return;
-        case GL_MAX_RECTANGLE_TEXTURE_SIZE:
-            BE(glGetIntegerv)(GL_MAX_TEXTURE_SIZE, data);
+    if (local_integer(pname, data)) return;
+    BE(glGetIntegerv)(pname, data);
+}
+
+void gl31_glGetInteger64v(GLenum pname, GLint64* data)
+{
+    GLint v = 0;
+    if (!data) return;
+    if (local_integer(pname, &v)) { *data = (GLint64)v; return; }
+    BE(glGetInteger64v)(pname, data);
+}
+
+void gl31_glGetInteger64i_v(GLenum target, GLuint index, GLint64* data)
+{
+    gl31_state_t* s = gl31_state();
+    if (!data) return;
+    switch (target) {
+        case GL_UNIFORM_BUFFER_BINDING:
+        case GL_UNIFORM_BUFFER_START:
+        case GL_UNIFORM_BUFFER_SIZE:
+            gl31_state_load_limits();
+            if ((GLint)index >= s->max_ubo_bindings) { gl31_set_error(GL_INVALID_VALUE); return; }
+            if (target == GL_UNIFORM_BUFFER_BINDING)    *data = (GLint64)s->ubo[index].buffer;
+            else if (target == GL_UNIFORM_BUFFER_START) *data = (GLint64)s->ubo[index].offset;
+            else                                        *data = (GLint64)s->ubo[index].size;
             return;
-        case GL_PRIMITIVE_RESTART:       *data = gl31_state()->prim_restart; return;
-        case GL_POINT_SPRITE_COORD_ORIGIN: *data = (GLint)gl31_state()->point_sprite_origin; return;
-        default: {
-            GLboolean b;
-            if (gl31_tex_get_binding(pname, data)) return;      /* TEXTURE_BINDING_1D/RECT/... */
-            if (gl31_soft_cap_get(pname, &b)) { *data = b; return; }
-            BE(glGetIntegerv)(pname, data);
-        }
+        default:
+            BE(glGetInteger64i_v)(target, index, data);
     }
 }
 

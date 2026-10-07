@@ -1,56 +1,171 @@
-# Lorica GL31 — OpenGL 3.1 core sobre GLES 3.0+
+# Lorica GL31 - OpenGL 3.1 Core Layer
 
-Capa que expone la API de OpenGL 3.1 core y la traduce a un backend GLES 3.0 o superior
-cargado con un `loader` (`eglGetProcAddress` / `dlsym`).
+Lorica es un traductor de OpenGL 3.1 core a GLES 3.0+ que permite utilizar API de OpenGL 3.1 en sistemas que solo tienen soporte para GLES 3.0.
 
-## Compilar
+## Características
 
-    make                  # liblorica_gl31.a
-    make SHARED=1         # liblorica_gl31.so
-    make test             # pruebas con backend simulado (no necesita GPU)
-    make SYSTEM_GLES=1    # usar los headers GLES del sistema en vez de third_party/khronos
+### Soporte Completo
+- **Vertex Array Objects (VAO)** - Gestión de estado de vertex
+- **Buffer Objects** - Crear, modificar, mapear buffers
+- **Texture Management** - Todas las operaciones de texturas
+- **Framebuffer Objects (FBO)** - Renderizado offscreen
+- **Shader Programs** - GLSL compilation y linking
+- **Uniforms** - Bloques de uniformes (UBO) y uniforms escalares
+- **Transform Feedback** - Captura de datos de geometría
+- **Queries** - Occlusion queries y time elapsed
+- **Samplers** - Objetos de muestreo independientes
 
-Requiere solo un compilador C con soporte GNU (`__thread`, `__typeof__`): gcc o clang.
-Los headers de Khronos vienen incluidos en `third_party/khronos`.
+### Características Avanzadas
+- **Sampler Rewriting** - Traducción automática de `sampler1D`/`sampler2DRect` a `sampler2D`
+- **Capability Detection** - Detección automática de extensiones del backend
+- **Optional Functions** - Carga dinámica de funciones según capacidades
+- **State Management** - Gestión coherente de estado entre API y backend
+- **Error Handling** - Manejo completo de errores GL con GL_INVALID_* apropiados
+
+## Compilación
+
+### Requisitos
+- Compilador C (GCC, Clang)
+- Headers de OpenGL ES 3.0+ (GLES3/gl3.h o superior)
+
+### Compilar Biblioteca Estática
+```bash
+make
+```
+
+### Compilar Biblioteca Compartida
+```bash
+make SHARED=1
+```
+
+### Instalar
+```bash
+make install
+```
 
 ## Uso
 
-    #include "gl31.h"
-    if (gl31_init(eglGetProcAddress) != 0) { /* falta alguna funcion obligatoria del backend */ }
-    void* fn = gl31_get_proc_address("glDrawArrays");   /* NULL si no es de GL 3.1 */
-    ...
-    gl31_shutdown();
+### Inicialización
+```c
+#include "gl31.h"
 
-Las funciones de GLES 3.0 base son obligatorias; las posteriores (`glEnablei`, `glColorMaski`,
-border clamp, `glGetTexLevelParameteriv`...) se cargan solo si la version/extensiones del
-backend las ofrecen (`gl31_caps`, `gl31_get_optional()`).
+// Loader que devuelve direcciones de funciones (eglGetProcAddress, dlsym, etc.)
+typedef void* (*gl31_loader_fn)(const char* name);
 
-## Estructura
+// Inicializar Lorica
+if (gl31_init(my_loader_function) != 0) {
+    fprintf(stderr, "Error: no se pudo inicializar GL31\n");
+    return -1;
+}
+```
 
-| Archivo | Contenido |
-|---|---|
-| `gl31.h` | API interna, tabla de funciones del backend, estado, capacidades |
-| `gl31.c` | tabla de despacho `gl31_get_proc_address` |
-| `gl31_caps.c` | `gl31_init/shutdown`, deteccion de capacidades, carga de opcionales |
-| `gl31_state.c` | estado por hilo, errores, samplers |
-| `gl31_render.c` | Enable/Disable (caps de desktop sin equivalente en ES), blend/stencil/depth, clear, puntos |
-| `gl31_vao.c` `gl31_buffer.c` `gl31_draw.c` `gl31_attrib.c` | vertices, buffers, draw |
-| `gl31_texture.c` | texturas, 1D/RECT/1D_ARRAY emulados, TexImage/SubImage/Copy/Compressed, mipmaps, PixelStore |
-| `gl31_fbo.c` | framebuffers, renderbuffers, ReadPixels con conversion de formato |
-| `gl31_shader_glsl.c` `gl31_shader_link.c` | conversion GLSL 1.10–1.50/3.30 → ES 3.00; objetos shader/programa |
-| `gl31_uniform.c` | uniforms, UBO, consultas de programa |
-| `gl31_query.c` | queries, render condicional (emulado), `glGetString`/`glGet*v` |
-| `gl31_xfb.c` | transform feedback |
-| `gl31_stubs.c` | lo que GLES no puede dar: avisa una vez por stderr y, si el resultado seria incorrecto, genera error GL |
+### Obtener Direcciones de Funciones
+```c
+void* glCreateShader_ptr = gl31_get_proc_address("glCreateShader");
+// Usar con dlsym/eglGetProcAddress...
+```
 
-## Limitaciones conocidas
+### Usar API GL 3.1
+```c
+// Ahora puedes usar funciones GL 3.1 normales:
+GLuint vao;
+glGenVertexArrays(1, &vao);
+glBindVertexArray(vao);
 
-- `sampler1D`, `sampler2DRect`, `samplerBuffer`, `gl_ClipDistance` y built-ins del perfil de
-  compatibilidad **se rechazan** al compilar el shader (error claro en el info log). No hay reescritura
-  de samplers: los targets 1D/RECTANGLE existen para texturas, pero no se pueden muestrear desde GLSL.
-- `glTexImage1D`, `glGetTexImage`, `glTexBuffer`, `glClampColor`: stubs (error / aviso).
-- `glPolygonMode` solo admite `GL_FILL`; `glLogicOp`, `GL_CLIP_DISTANCEi`: sin efecto.
-- Primitive restart solo con el indice fijo del tipo (0xFF/0xFFFF/0xFFFFFFFF).
-- Render condicional: se evalua al hacer Begin (no por draw).
-- Compresion de texturas en `GL_TEXTURE_1D_ARRAY` / `GL_TEXTURE_RECTANGLE`: no soportada.
-- Persistent/coherent mapping (`glBufferStorage`): no soportado.
+// Sampler rewriting automático:
+// glUniform1i(loc, 0); // con sampler1D -> se traduce a sampler2D internamente
+```
+
+### Limpiar
+```c
+gl31_shutdown();
+```
+
+## Arquitectura
+
+### Módulos Principales
+
+- **gl31.c/gl31.h** - Dispatch table y inicialización
+- **gl31_state.c** - Gestión de estado thread-local
+- **gl31_caps.c** - Detección de capacidades e inyección de funciones opcionales
+- **gl31_buffer.c** - Buffer objects y pixel buffers
+- **gl31_vao.c** - Vertex array objects
+- **gl31_texture.c** - Texturas y samplers
+- **gl31_fbo.c** - Framebuffer objects
+- **gl31_shader_glsl.c** - Compilación de shaders
+- **gl31_shader_link.c** - Linking de programas
+- **gl31_shader_rewrite.c** - Reescritura de samplers 1D/RECT
+- **gl31_uniform.c** - Uniforms y uniform blocks
+- **gl31_render_enhanced.c** - Estado de rendering y capabilities
+- **gl31_xfb.c** - Transform feedback
+- **gl31_query.c** - Occlusion queries
+- **gl31_stubs.c** - Funciones no soportadas en GLES
+
+### Mapeo a Backend (GLES)
+
+Todas las llamadas al backend pasan por la macro `BE()`:
+```c
+#define BE(fn) gl31_be.fn  // Acceso a función del backend
+```
+
+## Limitaciones Conocidas
+
+### No Soportado en GLES 3.0
+- ✗ Texture Buffer Objects (`glTexBuffer`) - Requiere GLES 3.1 o extensión
+- ✗ Transform Feedback (sin buffers) - Requiere backend compatible
+- ✗ Shader Storage Buffer Objects (SSBO) - No disponible en GLES 3.0
+- ✗ Compute Shaders - No disponible en GLES 3.0
+- ✗ Double precision floats - Solo en desktop GL
+
+### Traducción Automática
+- ✓ `sampler1D` → `sampler2D` (adaptación de coordenadas)
+- ✓ `sampler1DArray` → `sampler2DArray`
+- ✓ `sampler2DRect` → `sampler2D` (coordinadas normalizadas)
+- ✗ `sampler1DShadow` - No soportado (ambiguo)
+- ✗ `sampler2DMSArray` - No existe en GLES 3.0
+
+### Funciones Stub (Aviso pero funcionan)
+- `glTexImage1D()` - Genera advertencia, no hace nada
+- `glGetTexImage()` - Genera advertencia, requeriría FBO temporal
+- `glPolygonMode()` - Solo GL_FILL disponible en GLES
+- `glDrawBuffer()` - GLES solo tiene GL_BACK
+
+## Detección de Extensiones
+
+Lorica automáticamente detecta y carga extensiones disponibles:
+
+```c
+gl31_caps_t caps = gl31_caps;  // Estructura global
+printf("GLES %d.%d\n", caps.es_major, caps.es_minor);
+printf("Texture Buffer: %s\n", caps.tex_buffer ? "sí" : "no");
+printf("Draw Instanced: %s\n", caps.draw_instanced ? "sí" : "no");
+printf("Border Clamp: %s\n", caps.border_clamp ? "sí" : "no");
+```
+
+## Thread Safety
+
+Lorica usa `__thread` para almacenamiento local de threads. Cada thread tiene su propio estado GL.
+
+## Compilación Condicional
+
+Definir `LORICA_GL31_PLATFORM_HEADER` para usar un header custom:
+```bash
+gcc -DLORICA_GL31_PLATFORM_HEADER=\"my_platform.h\" -c gl31.c
+```
+
+## Debugging
+
+Para más información de debug, compilar con:
+```bash
+CFLAGS="-g -DDEBUG" make clean all
+```
+
+Los errores de GL se reportan automáticamente mediante `gl31_set_error()`.
+
+## Licencia
+
+[Especificar según corresponda]
+
+## Autor
+
+[Contribuciones de la comunidad]

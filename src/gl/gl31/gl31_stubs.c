@@ -28,40 +28,6 @@ void gl31_stub_warn(const char* fn)
     fprintf(stderr, "LORICA GL31: %s no soportado sobre GLES (ignorado)\n", fn);
 }
 
-/* GLES 3.0 no tiene texture buffer objects. */
-void gl31_glTexBuffer(GLenum target, GLenum internalformat, GLuint buffer)
-{
-    (void)target; (void)internalformat; (void)buffer;
-    gl31_stub_warn("glTexBuffer");
-    gl31_set_error(GL_INVALID_OPERATION);
-}
-
-/* GLES 3.0 solo admite layout(location=N) en el shader. Con una unica salida
- * (location 0 por defecto) el resultado es correcto, por eso no es error. */
-void gl31_glBindFragDataLocation(GLuint program, GLuint color, const GLchar* name)
-{
-    (void)color; (void)name;
-    if (!program) { gl31_set_error(GL_INVALID_VALUE); return; }
-    gl31_stub_warn("glBindFragDataLocation");
-}
-
-void gl31_glTexImage1D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLint border,
-                       GLenum format, GLenum type, const void* pixels)
-{
-    (void)target; (void)level; (void)ifmt; (void)w; (void)border;
-    (void)format; (void)type; (void)pixels;
-    gl31_stub_warn("glTexImage1D");
-    gl31_set_error(GL_INVALID_OPERATION);
-}
-
-/* Requeriria un FBO temporal + glReadPixels; no esta en el backend minimo. */
-void gl31_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
-{
-    (void)target; (void)level; (void)format; (void)type; (void)pixels;
-    gl31_stub_warn("glGetTexImage");
-    gl31_set_error(GL_INVALID_OPERATION);
-}
-
 /* Emulado con MapBufferRange(READ) + memcpy. */
 void gl31_glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void* data)
 {

@@ -19,7 +19,7 @@
 #ifndef GL_GLES_PROTOTYPES
 #define GL_GLES_PROTOTYPES 0
 #endif
-#include <GLES3/gl3.h>
+#include <GLES3/gl32.h>
 #endif
 
 #define GL31_TLS __thread
@@ -124,8 +124,65 @@ typedef double GLclampd;
 #define GL_UNSIGNED_INT_SAMPLER_2D_RECT    0x8DD5
 #define GL_UNSIGNED_INT_SAMPLER_1D_ARRAY   0x8DD6
 #endif
+#ifndef GL_BGRA
+#define GL_BGRA 0x80E1
+#endif
+#ifndef GL_BGR
+#define GL_BGR 0x80E0
+#endif
 #ifndef GL_STENCIL_INDEX
 #define GL_STENCIL_INDEX 0x1901
+#endif
+
+#ifndef GL_GEOMETRY_SHADER
+#define GL_GEOMETRY_SHADER 0x8DD9
+#define GL_LINES_ADJACENCY 0x000A
+#define GL_LINE_STRIP_ADJACENCY 0x000B
+#define GL_TRIANGLES_ADJACENCY 0x000C
+#define GL_TRIANGLE_STRIP_ADJACENCY 0x000D
+#define GL_FRAMEBUFFER_ATTACHMENT_LAYERED 0x8DA7
+#endif
+#ifndef GL_TEXTURE_2D_MULTISAMPLE
+#define GL_TEXTURE_2D_MULTISAMPLE 0x9100
+#define GL_TEXTURE_2D_MULTISAMPLE_ARRAY 0x9102
+#define GL_TEXTURE_BINDING_2D_MULTISAMPLE 0x9104
+#define GL_TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY 0x9105
+#define GL_TEXTURE_SAMPLES 0x9106
+#define GL_TEXTURE_FIXED_SAMPLE_LOCATIONS 0x9107
+#define GL_SAMPLE_POSITION 0x8E50
+#define GL_SAMPLE_MASK 0x8E51
+#define GL_SAMPLE_MASK_VALUE 0x8E52
+#define GL_MAX_SAMPLE_MASK_WORDS 0x8E59
+#endif
+#ifndef GL_PROXY_TEXTURE_2D_MULTISAMPLE
+#define GL_PROXY_TEXTURE_2D_MULTISAMPLE 0x9101
+#define GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY 0x9103
+#endif
+#ifndef GL_FIRST_VERTEX_CONVENTION
+#define GL_FIRST_VERTEX_CONVENTION 0x8E4D
+#endif
+#ifndef GL_LAST_VERTEX_CONVENTION
+#define GL_LAST_VERTEX_CONVENTION 0x8E4E
+#endif
+#ifndef GL_PROVOKING_VERTEX
+#define GL_PROVOKING_VERTEX 0x8E4F
+#endif
+#ifndef GL_DEPTH_CLAMP
+#define GL_DEPTH_CLAMP 0x864F
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP_SEAMLESS
+#define GL_TEXTURE_CUBE_MAP_SEAMLESS 0x884F
+#endif
+#ifndef GL_CONTEXT_PROFILE_MASK
+#define GL_CONTEXT_PROFILE_MASK 0x9126
+#define GL_CONTEXT_CORE_PROFILE_BIT 0x00000001
+#define GL_CONTEXT_COMPATIBILITY_PROFILE_BIT 0x00000002
+#endif
+#ifndef GL_CONTEXT_FLAGS
+#define GL_CONTEXT_FLAGS 0x821E
+#endif
+#ifndef GL_MAX_CLIP_DISTANCES
+#define GL_MAX_CLIP_DISTANCES 0x0D32
 #endif
 
 #define GL31_MAX_UBO_BINDINGS 84
@@ -338,6 +395,18 @@ typedef double GLclampd;
     X(void, glTransformFeedbackVaryings, (GLuint,GLsizei,const GLchar* const*,GLenum)) \
     X(void, glGetTransformFeedbackVarying, (GLuint,GLuint,GLsizei,GLsizei*,GLsizei*,GLenum*,GLchar*)) \
     X(void, glFlushMappedBufferRange, (GLenum,GLintptr,GLsizeiptr)) \
+    X(GLsync, glFenceSync, (GLenum,GLbitfield)) \
+    X(GLboolean, glIsSync, (GLsync)) \
+    X(void, glDeleteSync, (GLsync)) \
+    X(GLenum, glClientWaitSync, (GLsync,GLbitfield,GLuint64)) \
+    X(void, glWaitSync, (GLsync,GLbitfield,GLuint64)) \
+    X(void, glGetSynciv, (GLsync,GLenum,GLsizei,GLsizei*,GLint*)) \
+    X(void, glGetInteger64v, (GLenum,GLint64*)) \
+    X(void, glGetInteger64i_v, (GLenum,GLuint,GLint64*)) \
+    X(void, glGetBufferParameteri64v, (GLenum,GLenum,GLint64*)) \
+    X(void, glSamplerParameteriv, (GLuint,GLenum,const GLint*)) \
+    X(void, glSamplerParameterfv, (GLuint,GLenum,const GLfloat*)) \
+    X(void, glGetSamplerParameterfv, (GLuint,GLenum,GLfloat*)) \
     X(void, glGetBufferPointerv, (GLenum,GLenum,void**))
 
 /* Funciones OPCIONALES del backend: no existen en GLES 3.0 base. Se cargan en
@@ -356,7 +425,16 @@ typedef double GLclampd;
     X(void, glGetTexParameterIuiv, (GLenum, GLenum, GLuint*)) \
     X(void, glSamplerParameterIiv, (GLuint, GLenum, const GLint*)) \
     X(void, glSamplerParameterIuiv, (GLuint, GLenum, const GLuint*)) \
-    X(void, glGetTexLevelParameteriv, (GLenum, GLint, GLenum, GLint*))
+    X(void, glGetTexLevelParameteriv, (GLenum, GLint, GLenum, GLint*)) \
+    X(void, glDrawElementsBaseVertex, (GLenum, GLsizei, GLenum, const void*, GLint)) \
+    X(void, glDrawRangeElementsBaseVertex, (GLenum, GLuint, GLuint, GLsizei, GLenum, const void*, GLint)) \
+    X(void, glDrawElementsInstancedBaseVertex, (GLenum, GLsizei, GLenum, const void*, GLsizei, GLint)) \
+    X(void, glFramebufferTexture, (GLenum, GLenum, GLuint, GLint)) \
+    X(void, glTexStorage2DMultisample, (GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean)) \
+    X(void, glTexStorage3DMultisample, (GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLsizei, GLboolean)) \
+    X(void, glGetMultisamplefv, (GLenum, GLuint, GLfloat*)) \
+    X(void, glSampleMaski, (GLuint, GLbitfield)) \
+    X(void, glProvokingVertex, (GLenum))
 
 /* capacidades del backend (detectadas en init) */
 typedef struct {
@@ -372,6 +450,15 @@ typedef struct {
     int border_clamp;           /* ES 3.2 o EXT/OES_texture_border_clamp */
     int aniso;                  /* EXT_texture_filter_anisotropic */
     int level_query;            /* ES 3.1+: glGetTexLevelParameter nativo */
+    int base_vertex;            /* ES 3.2 o EXT/OES_draw_elements_base_vertex (si no: se emula) */
+    int geometry;               /* ES 3.2 o EXT/OES_geometry_shader */
+    int multisample_tex;        /* ES 3.1+: texturas 2D multisample, glSampleMaski, glGetMultisamplefv */
+    int ms_array;               /* ES 3.2 o OES_texture_storage_multisample_2d_array */
+    int provoking_vertex;       /* glProvokingVertex disponible (EXT/ANGLE/OES) */
+    int depth_clamp;            /* EXT_depth_clamp */
+    int clip_distance;          /* 0 = no, 1 = EXT_clip_cull_distance, 2 = ANGLE_clip_cull_distance */
+    int glsl_es;                /* version GLSL ES a la que se convierten TODOS los shaders: 300/310/320 */
+    int io_blocks_ext;          /* ES 3.1 con GL_EXT_shader_io_blocks (bloques in/out entre etapas) */
 } gl31_caps_t;
 
 extern gl31_caps_t gl31_caps;
@@ -427,6 +514,10 @@ typedef struct {
     GLenum    point_sprite_origin;
     /* GL_PACK_* (glPixelStorei); lo usa glReadPixels */
     GLint     pack_alignment, pack_row_length, pack_skip_rows, pack_skip_pixels;
+    /* GL_UNPACK_* (glPixelStorei); lo usa la conversion BGRA->RGBA de las subidas de texturas */
+    GLint     unpack_alignment, unpack_row_length, unpack_skip_rows, unpack_skip_pixels;
+    GLint     unpack_image_height, unpack_skip_images;
+    GLenum    provoking_vertex;
     int     limits_loaded;
     GLint   ubo_alignment;
     GLint   max_ubo_bindings;
@@ -520,6 +611,7 @@ void gl31_glEndQuery(GLenum target);
 void gl31_glGetQueryiv(GLenum target, GLenum pname, GLint* params);
 void gl31_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params);
 void gl31_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params);
+int gl31_advertised_minor(void);   /* 2 si hay geometry shaders (GL 3.2), si no 1 */
 const GLubyte* gl31_glGetString(GLenum name);
 const GLubyte* gl31_glGetStringi(GLenum name, GLuint index);
 void gl31_glGetIntegerv(GLenum pname, GLint* data);
@@ -530,6 +622,8 @@ char* gl31_glsl_convert(const char* src, GLenum shader_type, char* err, size_t e
 
 /* gl31_shader_link.c */
 void   gl31_link_shutdown(void);
+void   gl31_vao_shutdown(void);
+void   gl31_tex_shutdown(void);
 GLuint gl31_glCreateShader(GLenum type);
 void   gl31_glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);
 void   gl31_glCompileShader(GLuint shader);
@@ -817,5 +911,77 @@ int  gl31_read_pixels_ex(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, 
 /* gl31_shader_link.c: tipo de sampler tal como lo ve la app (hoy el conversor GLSL
  * solo admite samplers que existen en ES, asi que coincide con el tipo del backend). */
 GLenum gl31_program_sampler_type(GLuint program, const char* uniform_name, GLenum backend_type);
+
+/* ---------- GL 3.2 / 3.0 / 3.1: bloque 3 ---------- */
+/* gl31_sync.c */
+GLsync gl31_glFenceSync(GLenum condition, GLbitfield flags);
+GLboolean gl31_glIsSync(GLsync sync);
+void   gl31_glDeleteSync(GLsync sync);
+GLenum gl31_glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout);
+void   gl31_glWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout);
+void   gl31_glGetSynciv(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GLint* values);
+void   gl31_glGetInteger64v(GLenum pname, GLint64* data);
+void   gl31_glGetInteger64i_v(GLenum target, GLuint index, GLint64* data);
+void   gl31_glGetBufferParameteri64v(GLenum target, GLenum pname, GLint64* params);
+
+/* gl31_draw.c */
+void gl31_glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type, const void* indices, GLint basevertex);
+void gl31_glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices, GLint basevertex);
+void gl31_glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei inst, GLint basevertex);
+void gl31_glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei* count, GLenum type, const void* const* indices, GLsizei drawcount, const GLint* basevertex);
+void gl31_glProvokingVertex(GLenum mode);
+
+/* gl31_vao.c: atributos por VAO (para emular base vertex) */
+typedef struct {
+    int       enabled, integer, normalized;
+    GLint     size;
+    GLenum    type;
+    GLsizei   stride;
+    const void* ptr;
+    GLuint    buffer;
+    GLuint    divisor;
+} gl31_attrib_t;
+#define GL31_MAX_ATTRIBS 32
+/* NULL si no hay VAO activo */
+const gl31_attrib_t* gl31_vao_attribs(int* count);
+
+/* gl31_texture.c */
+void gl31_glTexSubImage1D(GLenum target, GLint level, GLint xo, GLsizei w, GLenum format, GLenum type, const void* pixels);
+void gl31_glCopyTexImage1D(GLenum target, GLint level, GLenum ifmt, GLint x, GLint y, GLsizei w, GLint border);
+void gl31_glCopyTexSubImage1D(GLenum target, GLint level, GLint xo, GLint x, GLint y, GLsizei w);
+void gl31_glCompressedTexImage1D(GLenum target, GLint level, GLenum ifmt, GLsizei w, GLint border, GLsizei size, const void* data);
+void gl31_glCompressedTexSubImage1D(GLenum target, GLint level, GLint xo, GLsizei w, GLenum format, GLsizei size, const void* data);
+void gl31_glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h, GLboolean fixed);
+void gl31_glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h, GLsizei d, GLboolean fixed);
+void gl31_glGetMultisamplefv(GLenum pname, GLuint index, GLfloat* val);
+void gl31_glSampleMaski(GLuint maskNumber, GLbitfield mask);
+void gl31_glGetCompressedTexImage(GLenum target, GLint level, void* img);
+
+/* gl31_state.c: samplers (adicionales) */
+void gl31_glSamplerParameteriv(GLuint s, GLenum pname, const GLint* v);
+void gl31_glSamplerParameterfv(GLuint s, GLenum pname, const GLfloat* v);
+void gl31_glSamplerParameterIiv(GLuint s, GLenum pname, const GLint* v);
+void gl31_glSamplerParameterIuiv(GLuint s, GLenum pname, const GLuint* v);
+void gl31_glGetSamplerParameterfv(GLuint s, GLenum pname, GLfloat* v);
+void gl31_glGetSamplerParameterIiv(GLuint s, GLenum pname, GLint* v);
+void gl31_glGetSamplerParameterIuiv(GLuint s, GLenum pname, GLuint* v);
+
+/* gl31_fbo.c */
+void gl31_glFramebufferTexture(GLenum target, GLenum attachment, GLuint texture, GLint level);
+
+/* gl31_shader_glsl.c: conversion con informacion adicional.
+ * `samplers` (opcional) recibe los samplers de desktop que no existen en ES
+ * (sampler1D / 1DArray / 2DRect) para poder informar su tipo real a la app. */
+#define GL31_MAX_SAMPLER_INFO 32
+typedef struct {
+    int n;
+    struct { char name[64]; GLenum type; } s[GL31_MAX_SAMPLER_INFO];
+} gl31_sampler_info_t;
+typedef struct { const char* name; GLuint location; } gl31_fragbind_t;
+char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
+                           const gl31_fragbind_t* binds, int nbinds,
+                           gl31_sampler_info_t* samplers, char* err, size_t errlen);
+/* tipo de desktop (GL_SAMPLER_1D...) de un uniform del programa, o `backend_type` si no esta en la tabla */
+GLenum gl31_program_uniform_type(GLuint program, const char* uniform_name, GLenum backend_type);
 
 #endif /* LORICA_GL31_H */

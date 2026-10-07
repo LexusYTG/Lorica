@@ -71,6 +71,7 @@ SET(GL_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/glstub.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/math/matheval.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_sync.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_caps.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_vao.c
