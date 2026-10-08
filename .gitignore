@@ -7,3 +7,4 @@ build/
 *.pbuf
 libGL.so.1.baseline
 libGL.so.1.stub31
+lib/

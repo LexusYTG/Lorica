@@ -34,8 +34,19 @@ void gl4es_Stub(void *x, ...) {
 void APIENTRY_GL4ES gl4es_Stub(void *x) {}
 #endif
 
+#ifndef NOEGL
+// GLADIATOR dispatch (glx/gl31_bridge.c): non-NULL only for a core GL>=3.1 context with an ES 3.x backend
+extern void* gl4es_gl31_proc_lookup(const char* name);
+#endif
+
 void* APIENTRY_GL4ES gl4es_GetProcAddress(const char *name) {
     DBG(printf("glGetProcAddress(\"%s\")", name);)
+    #ifndef NOEGL
+    {
+        void* gl31fn = gl4es_gl31_proc_lookup(name);
+        if(gl31fn) return gl31fn;
+    }
+    #endif
     // generated gles wrappers
     #include "glesfuncs.inc"
 

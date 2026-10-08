@@ -21,7 +21,6 @@ void *gl4es_glXGetProcAddress(const char *name) {
     _EX(glXCopyContext);
     _EX(glXCreateContext);
     _EX(glXCreateNewContext);
-    _EX(glXCreateContextAttribsARB);
     _EX(glXDestroyContext);
     _EX(glXGetConfig);
     _EX(glXGetCurrentDisplay);

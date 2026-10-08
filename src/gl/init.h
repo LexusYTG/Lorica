@@ -49,7 +49,9 @@ typedef struct _globals4es {
  int minbatch;
  int maxbatch;
  int es;
- int gl;
+ int gl;              // ceiling: max GL version a context may get (LIBGL_GL)
+ int gl_compat;       // version given to legacy/compat contexts (LIBGL_GL_COMPAT)
+ int version_override;// 1 if LIBGL_VERSION forces the GL_VERSION string
  int usevbo;
  int comments;
  int forcenpot;
@@ -85,5 +87,11 @@ typedef struct _globals4es {
 } globals4es_t;
 
 extern globals4es_t globals4es;
+
+
+// Per-context GL version (major*10+minor) of the current context, falls back to globals4es.gl_compat
+int gl4es_context_gl_version(void);
+// Profile mask (GL_CONTEXT_CORE_PROFILE_BIT / COMPATIBILITY) of the current context
+int gl4es_context_gl_profile(void);
 
 #endif // _GL4ES_INIT_H_

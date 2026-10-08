@@ -34,6 +34,7 @@
 #endif
 #include "glx_gbm.h"
 #include "hardext.h"
+#include "gl31_bridge.h"
 #include "streaming.h"
 #include "utils.h"
 #include "../gl/envvars.h"
@@ -249,11 +250,37 @@ static void RecycleDelSurface(GLXDrawable drawable) {
 
 extern void* egl;
 int globales2 = 0;
+static int pending_gl_version = 0;   // set by glXCreateContextAttribs just around context creation
+static int pending_gl_profile = 0;
 // GLState management
 void* NewGLState(void* shared_glstate, int es2only);
 void DeleteGLState(void* oldstate);
 void ActivateGLState(void* new_glstate);
 void CopyGLEShard(void* dst, const void* src);
+
+// Store the version/profile negotiated at context creation into the new glstate.
+// 0 means "legacy": the version is then globals4es.gl_compat.
+static void ApplyContextVersion(GLXContext context) {
+    glstate_t* st = (glstate_t*)context->glstate;
+    if(!st) return;
+    st->gl_version = context->gl_version ? context->gl_version : globals4es.gl_compat;
+    st->gl_profile = context->gl_profile ? context->gl_profile : GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+    snprintf(st->gl_version_str, sizeof(st->gl_version_str), "%d.%d", st->gl_version/10, st->gl_version%10);
+}
+
+// 1 if the current GLX context is a core-profile GL>=3.1 context backed by an ES 3.x EGL context:
+// only then glGetProcAddress hands out GLADIATOR (gl31_*) entry points (see gl31_bridge.c).
+// Compatibility-profile contexts stay on the GL4ES fixed-function path.
+#ifndef NOX11
+int gl4es_glx_current_is_gl31(void) {
+    return glxContext
+        && glxContext->es_major >= 3
+        && glxContext->gl_version >= 31
+        && glxContext->gl_profile == GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
+}
+#else
+int gl4es_glx_current_is_gl31(void) { return 0; }   // NOX11: no fake GLX context to ask
+#endif
 
 typedef struct {
     int drawable;
@@ -752,6 +779,8 @@ GLXContext gl4es_glXCreateContext(Display *display,
     LOAD_EGL(eglQueryString);
     
     GLXContext fake = calloc(1, sizeof(struct __GLXContextRec));
+    fake->gl_version = pending_gl_version;
+    fake->gl_profile = pending_gl_profile;
 
     // make an egl context here...
     EGLBoolean result;
@@ -858,12 +887,16 @@ GLXContext createPBufferContext(Display *display, GLXContext shareList, GLXFBCon
     GLXContext fake = malloc(sizeof(struct __GLXContextRec));
 	memset(fake, 0, sizeof(struct __GLXContextRec));
     fake->es2only = globales2;
+    fake->gl_version = pending_gl_version;
+    fake->gl_profile = pending_gl_profile;
     fake->shared = (shareList)?shareList->glstate:NULL;
     fake->eglConfigs[0] = pbufConfigs[0];
     fake->eglConfigsCount = 1;
     fake->eglconfigIdx = 0;
 
-	fake->eglContext = egl_eglCreateContext(eglDisplay, fake->eglConfigs[0], shared, (hardext.esversion==1)?egl_context_attrib:egl_context_attrib_es2);
+	fake->eglContext = gl4es_gl31_create_backend_context(eglDisplay, fake->eglConfigs, fake->eglConfigsCount, &fake->eglconfigIdx,
+                                                        shared, fake->gl_version, fake->es2only, &fake->es_major, &fake->es_minor);
+    if(fake->eglContext && fake->es_major>=3) { fake->gl31_ref = 1; gl4es_gl31_bridge_retain(); }
 
     CheckEGLErrors();
 
@@ -935,6 +968,8 @@ GLXContext gl4es_glXCreateContextAttribsARB(Display *display, GLXFBConfig config
 
         GLXContext fake = calloc(1, sizeof(struct __GLXContextRec));
         fake->es2only = globales2;
+        fake->gl_version = pending_gl_version;
+        fake->gl_profile = pending_gl_profile;
 
         fake->shared = (share_context)?share_context->glstate:NULL;
 
@@ -970,7 +1005,9 @@ GLXContext gl4es_glXCreateContextAttribsARB(Display *display, GLXFBConfig config
             return fake;
         }
         EGLContext shared = (share_context)?share_context->eglContext:EGL_NO_CONTEXT;
-        fake->eglContext = egl_eglCreateContext(eglDisplay, fake->eglConfigs[fake->eglconfigIdx], shared, (hardext.esversion==1)?egl_context_attrib:egl_context_attrib_es2);
+        fake->eglContext = gl4es_gl31_create_backend_context(eglDisplay, fake->eglConfigs, fake->eglConfigsCount, &fake->eglconfigIdx,
+                                                            shared, fake->gl_version, fake->es2only, &fake->es_major, &fake->es_minor);
+        if(fake->eglContext && fake->es_major>=3) { fake->gl31_ref = 1; gl4es_gl31_bridge_retain(); }
 
         CheckEGLErrors();
 
@@ -1018,6 +1055,12 @@ void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
         }
 
         DeleteGLState(ctx->glstate);
+
+        // last ES3 context going away: GLADIATOR is shut down while this context is still current
+        if(ctx->gl31_ref) {
+            gl4es_gl31_bridge_release();
+            ctx->gl31_ref = 0;
+        }
         
         // bind context back
         if(eglSurface!=ctx->eglSurface || eglContext!=ctx->eglContext) {
@@ -1063,8 +1106,10 @@ void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
             fbdev = -1;
         }*/
     }
-    if(glxContext==ctx)
+    if(glxContext==ctx) {
         glxContext = NULL;
+        gl4es_gl31_dispatch_update();
+    }
         
     free(ctx);
     return;
@@ -1228,8 +1273,10 @@ Bool gl4es_glXMakeCurrent(Display *display,
             glxContext->shared_eglsurface = (int*)calloc(1, sizeof(int));
         context->shared_eglsurface = glxContext->shared_eglsurface;
         (*glxContext->shared_eglsurface)++;
-        if(!context->glstate)
+        if(!context->glstate) {
             context->glstate = NewGLState(context->shared, context->es2only);
+            ApplyContextVersion(context);
+        }
         DBG(printf("Same drawable and compatible context: sharing everything...\n");)
 
     }
@@ -1238,6 +1285,7 @@ Bool gl4es_glXMakeCurrent(Display *display,
         CopyGLEShard(context->glstate, glxContext->glstate);
         ActivateGLState(context->glstate);
         glxContext = context;
+        gl4es_gl31_dispatch_update();
         gl4es_restoreCurrentFBO();
 
         DBG(printf(" => True\n");)
@@ -1268,6 +1316,7 @@ Bool gl4es_glXMakeCurrent(Display *display,
 #ifndef NOX11
                 eglSurf = context->eglSurface = pbuffersize[created-1].Surface; //(EGLSurface)drawable;
                 eglCtx = context->eglContext = pbuffersize[created-1].Context;    // this context is ok for the PBuffer
+                context->es_major = 2; context->es_minor = 0;   // that pbuffer context is plain ES2: GLADIATOR does not apply
                 eglConfig = context->eglConfigs[context->eglconfigIdx] = pbuffersize[created-1].Config;
                 /*if (context->contextType != pbuffersize[created-1].Type) {    // Context / buffer not aligned, create a new glstate tracker
                     if(context->glstate)
@@ -1417,6 +1466,7 @@ Bool gl4es_glXMakeCurrent(Display *display,
     DBG(printf("LIBGL: eglMakeCurrent(%p, %p, %p, %p)\n", eglDisplay, eglSurf, eglSurf, eglCtx);)
     CheckEGLErrors();
     glxContext = context;
+    gl4es_gl31_dispatch_update();
     if(!result) {
         // error switching context, don't change glstate and abort...
         DBG(printf(" => False\n");)
@@ -1458,6 +1508,7 @@ Bool gl4es_glXMakeCurrent(Display *display,
         
         if(!context->glstate) {
             context->glstate = NewGLState(context->shared, context->es2only);
+            ApplyContextVersion(context);
             if(created && pbuffersize[created-1].Type >= 3) {
                 ((glstate_t*)context->glstate)->emulatedPixmap = created;
                 ((glstate_t*)context->glstate)->emulatedWin = pbuffersize[created-1].Type==4?1:0;
@@ -1465,6 +1516,10 @@ Bool gl4es_glXMakeCurrent(Display *display,
         }
         context->drawable = drawable;
 
+        // ES 3.x backend context now current: start GLADIATOR (no-op for legacy/ES2 contexts)
+        if(context->es_major>=3)
+            gl4es_gl31_bridge_ensure();
+        gl4es_gl31_dispatch_update();
         ActivateGLState(context->glstate);
 #ifdef PANDORA
         if(!created) pandora_set_gamma();
@@ -2897,24 +2952,43 @@ GLXContext gl4es_glXCreateContextAttribs(Display *dpy, GLXFBConfig config, GLXCo
             }
         }   
     }
-    if(majver*10+minver != 0) {
-        DBG(printf(" Required context version %d.%d\n", majver, minver);)
-        if(majver*10+minver>21) {
-            LOGE("Asked for unsupported context version %d.%d\n", majver, minver);
-            return 0;
-        }
-        if(majver*10+minver>globals4es.gl) {
-            LOGE("Asked for unsupported context version %d.%d (max version is %d.%d)\n", majver, minver, globals4es.gl/10, globals4es.gl%10);
-            return 0;
-        }
-        if((mask&GLX_CONTEXT_ES2_PROFILE_BIT_EXT) && hardext.esversion<2) {
+    // Version negotiation: the context gets what it asks for, never more than the ceiling (LIBGL_GL).
+    // No version asked -> legacy/compat context, gets globals4es.gl_compat.
+    int negotiated = 0;     // 0 = legacy default
+    int profile = 0;
+    if(mask&GLX_CONTEXT_ES2_PROFILE_BIT_EXT) {
+        // ES profile: versions are ES versions, not desktop GL ones
+        if(hardext.esversion<2) {
             LOGE("Asked for ES2 compatible context on GLES1.1 Backend\n");
             return 0;
+        }
+    } else if(majver*10+minver != 0) {
+        int asked = majver*10+minver;
+        DBG(printf(" Required context version %d.%d\n", majver, minver);)
+        if(asked>globals4es.gl) {
+            LOGE("Asked for unsupported context version %d.%d (max version is %d.%d)\n", majver, minver, globals4es.gl/10, globals4es.gl%10);
+            return 0;   // like a real driver: the app falls back on its own
+        }
+        // a context never reports less than the legacy default, but never more than asked above it
+        negotiated = (asked<globals4es.gl_compat)?globals4es.gl_compat:asked;
+        if(negotiated>=32) {
+            profile = (mask&GLX_CONTEXT_CORE_PROFILE_BIT_ARB)?GLX_CONTEXT_CORE_PROFILE_BIT_ARB:GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+        } else if(negotiated==31) {
+            // GL 3.1 has no profiles (no fixed function without ARB_compatibility): it is a core-like
+            // context, so it goes to GLADIATOR whether or not the app passed a profile mask
+            profile = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
+        } else if(mask&GLX_CONTEXT_CORE_PROFILE_BIT_ARB) {
+            LOGE("Core profile asked for version %d.%d (< 3.2)\n", majver, minver);
+            return 0;   // GLX_ARB_create_context_profile: core needs >= 3.2
         }
     }
     if(mask&GLX_CONTEXT_ES2_PROFILE_BIT_EXT)
         globales2 = 1;
+    pending_gl_version = negotiated;
+    pending_gl_profile = profile;
     GLXContext context = gl4es_glXCreateNewContext(dpy, config, GLX_RGBA_TYPE, share_context, direct);
+    pending_gl_version = 0;
+    pending_gl_profile = 0;
     globales2 = 0;
     return context;
 }

@@ -9,6 +9,10 @@
 #include "matvec.h"
 #include "texgen.h"
 
+#ifndef GL_CONTEXT_PROFILE_MASK
+#define GL_CONTEXT_PROFILE_MASK 0x9126
+#endif
+
 //#define DEBUG
 #ifdef DEBUG
 #define DBG(a) a
@@ -249,6 +253,13 @@ const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
     errorShim(GL_NO_ERROR);
     switch (name) {
         case GL_VERSION:
+            if(globals4es.version_override)
+                return (GLubyte *)globals4es.version;   // LIBGL_VERSION forces the string
+            if(glstate && glstate->gl_version) {
+                if(!glstate->gl_version_str[0])
+                    snprintf(glstate->gl_version_str, sizeof(glstate->gl_version_str), "%d.%d", glstate->gl_version/10, glstate->gl_version%10);
+                return (GLubyte *)glstate->gl_version_str;
+            }
             return (GLubyte *)globals4es.version;
         case GL_EXTENSIONS:
             BuildExtensionsList();
@@ -264,11 +275,11 @@ const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
             }
 			return (GLubyte *)renderer_string;
 		case GL_SHADING_LANGUAGE_VERSION:
-            if(globals4es.gl>=30)
+            if(gl4es_context_gl_version()>=30)
                 return (GLubyte *)"1.40";   /* GLSL 1.40 = GL 3.1 */
-            else if(globals4es.gl==21)
+            else if(gl4es_context_gl_version()==21)
             return (GLubyte *)"1.20";
-            else if(globals4es.gl==20)
+            else if(gl4es_context_gl_version()==20)
                 return (GLubyte *)"1.10";
 			return (GLubyte *)"";
         case GL_PROGRAM_ERROR_STRING_ARB:
@@ -309,10 +320,15 @@ static int getter_scissor4(GLfloat *params) {
 int gl4es_commonGet(GLenum pname, GLfloat *params) {
     switch (pname) {
         case GL_MAJOR_VERSION:
-            *params = globals4es.gl/10;
+            *params = gl4es_context_gl_version()/10;
             break;
         case GL_MINOR_VERSION:
-            *params = globals4es.gl%10;
+            *params = gl4es_context_gl_version()%10;
+            break;
+        case GL_CONTEXT_PROFILE_MASK:
+            if(gl4es_context_gl_version()<32)
+                return 0;   // profiles only exist from 3.2
+            *params = (GLfloat)gl4es_context_gl_profile();
             break;
         case GL_DOUBLEBUFFER:
             *params = 1;    // Fake double buffering...

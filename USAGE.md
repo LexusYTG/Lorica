@@ -23,12 +23,14 @@ Controls the version of GLES to use
  * 2 : Use GLES 2.0 backend
 
 ##### LIBGL_GL
-Controls the version of OpenGL exposed
- * 0 : Default, expose OpenGL 1.5 when using GLES1.1 or OpenGL 2.1 when using GLES2.0
- * 10..14: Export OpenGL 1.0-1.4
- * 15: Expose OpenGL 1.5 (default for GLES 1.1 backend)
- * 20: Expose OpenGL 2.0
- * 21: Expose OpenGL 2.1 (default for GLES 2.0 backend)
+Ceiling of the OpenGL version a context can get. Each context receives the version it asks for (glXCreateContextAttribsARB), never more than this value. If an app asks for more, context creation fails so the app can fall back by itself.
+ * 0 : Default, ceiling of 1.5 when using GLES1.1 or 2.1 when using GLES2.0
+ * 10..15, 20, 21, 30..33, 40..45: ceiling of OpenGL 1.0 ... 4.5 (e.g. 42 = 4.2)
+
+##### LIBGL_GL_COMPAT
+Version reported to contexts that do not ask for a specific one (glXCreateContext, or no version in the attributes). Clamped to LIBGL_GL.
+ * 0 : Default, 1.5 when using GLES1.1 or 2.1 when using GLES2.0
+ * same values as LIBGL_GL
 
 ##### LIBGL_XREFRESH
 Debug helper in specific cases

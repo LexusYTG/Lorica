@@ -212,6 +212,24 @@ void initialize_gl4es() {
         break;
     }
 
+    // Version given to contexts that do not ask for a specific one (glXCreateContext,
+    // or glXCreateContextAttribsARB without a version). Never above the ceiling.
+    {
+        int compat = ReturnEnvVarInt("LIBGL_GL_COMPAT");
+        switch(compat) {
+          case 10: case 11: case 12: case 13: case 14: case 15:
+          case 20: case 21: case 30: case 31: case 32: case 33:
+          case 40: case 41: case 42: case 43: case 44: case 45:
+            break;
+          default:
+            compat = (globals4es.es==1) ? 15 : 21;
+            break;
+        }
+        if(compat > globals4es.gl) compat = globals4es.gl;
+        globals4es.gl_compat = compat;
+        SHUT_LOGD("OpenGL ceiling %d.%d, legacy contexts get %d.%d\n", globals4es.gl/10, globals4es.gl%10, compat/10, compat%10);
+    }
+
     SHUT_LOGD("Using GLES %s backend\n", (globals4es.es==1)?"1.1":"2.0");
 
     env(LIBGL_NODEPTHTEX, globals4es.nodepthtex, "Disable usage of Depth Textures");
@@ -384,11 +402,12 @@ void initialize_gl4es() {
         SHUT_LOGD("Override version string with \"%s\" (should be in the form of \"1.x\")\n", env_version);
     }
     if(env_version) {
+        globals4es.version_override = 1;
         snprintf(globals4es.version, 49, "%s", env_version);
         SHUT_LOGD("Targeting OpenGL %s\n", env_version);
     } else {
-        snprintf(globals4es.version, 49, "%d.%d", globals4es.gl/10, globals4es.gl%10);
-        SHUT_LOGD("Targeting OpenGL %d.%d\n", globals4es.gl/10, globals4es.gl%10);
+        snprintf(globals4es.version, 49, "%d.%d", globals4es.gl_compat/10, globals4es.gl_compat%10);
+        SHUT_LOGD("Targeting OpenGL %d.%d (ceiling; each context gets the version it asks for)\n", globals4es.gl/10, globals4es.gl%10);
     }
 
     if(hardext.srgb && IsEnvVarTrue("LIBGL_SRGB")) {

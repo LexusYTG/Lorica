@@ -84,6 +84,27 @@ LOCAL_SRC_FILES := \
 	src/gl/wrap/glstub.c \
 	src/gl/math/matheval.c \
 	src/glx/hardext.c \
+	src/glx/gl31_bridge.c \
+	src/gl/GLADIATOR/gl31.c \
+	src/gl/GLADIATOR/gl31_sync.c \
+	src/gl/GLADIATOR/gl31_caps.c \
+	src/gl/GLADIATOR/gl31_state.c \
+	src/gl/GLADIATOR/gl31_vao.c \
+	src/gl/GLADIATOR/gl31_buffer.c \
+	src/gl/GLADIATOR/gl31_texture.c \
+	src/gl/GLADIATOR/gl31_fbo.c \
+	src/gl/GLADIATOR/gl31_draw.c \
+	src/gl/GLADIATOR/gl31_attrib.c \
+	src/gl/GLADIATOR/gl31_uniform.c \
+	src/gl/GLADIATOR/gl31_query.c \
+	src/gl/GLADIATOR/gl31_render.c \
+	src/gl/GLADIATOR/gl31_shader_glsl.c \
+	src/gl/GLADIATOR/gl31_shader_link.c \
+	src/gl/GLADIATOR/gl31_xfb.c \
+	src/gl/GLADIATOR/gl31_stubs.c \
+	src/gl/GLADIATOR/gl31_compute.c \
+	src/gl/GLADIATOR/gl31_gl4.c \
+	src/gl/GLADIATOR/gl31_dsa.c \
 	src/glx/glx.c \
 	src/glx/lookup.c \
 	src/glx/gbm.c \
@@ -91,6 +112,8 @@ LOCAL_SRC_FILES := \
 
 LOCAL_CFLAGS += -g -std=gnu99 -funwind-tables -O3 -fvisibility=hidden -include include/android_debug.h
 LOCAL_CFLAGS += -DNOX11
+# headers Khronos que necesita GLADIATOR (LOCAL_CFLAGS no se exporta a quien enlace la biblioteca)
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/src/gl/GLADIATOR/third_party/khronos
 LOCAL_CFLAGS += -DNO_GBM
 #LOCAL_CFLAGS += -DNO_INIT_CONSTRUCTOR
 LOCAL_CFLAGS += -DDEFAULT_ES=2

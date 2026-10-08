@@ -61,6 +61,9 @@ struct glstate_s {
 #ifdef TEXSTREAM
     int                 bound_stream[MAX_TEX];  // should be shared too
 #endif
+    int                 gl_version;    // negotiated at context creation (major*10+minor), 0 = not set
+    int                 gl_profile;    // negotiated profile mask (1 = core, 2 = compat), 0 = not set
+    char                gl_version_str[16];
     int                 emulatedPixmap;
     int                 emulatedWin;
     int                 *shared_cnt;

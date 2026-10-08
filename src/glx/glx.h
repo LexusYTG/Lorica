@@ -171,6 +171,11 @@ struct __GLXContextRec {
     int stencil;
     int rbits, gbits, bbits, abits;
     int es2only;
+    int gl_version;     // negotiated GL version (major*10+minor), 0 = legacy default
+    int gl_profile;     // negotiated profile mask (1 core / 2 compat)
+    int es_major;       // ES version of the backend EGL context actually created (2 = legacy ES2 path)
+    int es_minor;
+    int gl31_ref;       // 1 if this context is counted by the GLADIATOR bridge (see gl31_bridge.c)
     int doublebuff;
     void* glstate;
     struct __GLXContextRec* shared;

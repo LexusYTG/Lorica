@@ -611,6 +611,28 @@ void DeleteGLState(void* oldstate) {
     return;
 }
 
+extern void gl31_set_context_version(int major, int minor, int profile);
+
+int gl4es_context_gl_version(void) {
+    if(glstate && glstate->gl_version)
+        return glstate->gl_version;
+    return globals4es.gl_compat ? globals4es.gl_compat : globals4es.gl;
+}
+
+int gl4es_context_gl_profile(void) {
+    if(glstate && glstate->gl_profile)
+        return glstate->gl_profile;
+    return 2;   // compatibility
+}
+
+// Tell the GL3+ module (GLADIATOR) which version/profile the now-current context negotiated
+static void sync_gl31_context(glstate_t* st) {
+    if(st && st->gl_version >= 31)
+        gl31_set_context_version(st->gl_version/10, st->gl_version%10, st->gl_profile);
+    else
+        gl31_set_context_version(0, 0, 0);   // legacy context: no cap from the context
+}
+
 void ActivateGLState(void* new_glstate) {
     glstate_t *newstate = (new_glstate)?(glstate_t*)new_glstate:&default_glstate;
     if(glstate == newstate) return;  // same state, nothing to do
@@ -626,6 +648,7 @@ void ActivateGLState(void* new_glstate) {
         newstate->raster.scissor_known = 1;
     }
     glstate = newstate;
+    sync_gl31_context(newstate);
 }
 
 void gl_init() {

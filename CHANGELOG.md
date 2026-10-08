@@ -1,5 +1,16 @@
 Version history
 ----
+##### Unreleased
+* Fix: stencil.c llamaba a glStencilFunc/glStencilOp sin declararlas (error con gcc >= 14); ahora usa gl4es_glStencilFunc/gl4es_glStencilOp
+* GLADIATOR: paso 3b, los simbolos GL exportados pasan por un salto indirecto que glXMakeCurrent repunta a GLADIATOR (contexto core GL >= 3.1) o a GL4ES; desactivable con -DLORICA_NO_DISPATCH (Linux x86_64/aarch64; aarch64 sin probar)
+* Fix: glXGetProcAddress("glXCreateContextAttribsARB") devolvia la variante que ignora los atributos; ahora negocia version y perfil (SDL, GLFW y glad la piden asi)
+* Fix: CMakeLists.txt y Android.mk no incluian los headers Khronos de third_party para compilar GLADIATOR (solo se aplican a sus fuentes)
+* Fix: un contexto GL 3.1 (sin perfil, como lo piden SDL/GLFW) ahora es core y va a GLADIATOR; antes se quedaba en GL4ES, y con mascara de perfil core se rechazaba
+* Test: tests/gl33_core_glx.c [MAJOR MINOR],, contexto 3.3 core por GLX con driver real (Mesa llvmpipe sobre Xvfb)
+* GLADIATOR: puente GL4ES<->GLADIATOR, pasos 1 y 2 (src/glx/gl31_bridge.c): contexto de backend ES 3.x para GL >= 3.1 y arranque/parada de gl31_init
+* GLADIATOR: paso 3, glGetProcAddress devuelve las funciones gl31_* en contextos core GL >= 3.1 con backend ES 3.x (no cubre funciones enlazadas directamente)
+* GLADIATOR: paso 4, con LIBGL_FB=2 (main FBO) los contextos GL >= 3.1 se quedan en ES 2; sin esa opcion el framebuffer por defecto es la superficie EGL
+
 ##### v1.1.6
 * Improve glGetError() handling
 * Improve LIBGL_FB=3 handling

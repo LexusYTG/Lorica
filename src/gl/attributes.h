@@ -69,8 +69,28 @@
 #ifndef AliasExport
  #if !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
   #ifdef __GNUC__
+   #if defined(__linux__) && !defined(LORICA_NO_DISPATCH) && (defined(__x86_64__) || defined(__aarch64__))
+    /* Despacho indirecto: cada simbolo GL exportado es un salto a traves de un slot que
+     * glXMakeCurrent repunta (GL4ES o GLADIATOR, ver gl4es_gl31_dispatch_update). Cada entrada se
+     * registra en la seccion lorica_disp como {nombre, slot, destino por defecto}. */
+    #ifdef __x86_64__
+     #define __LORICA_JMP_ARCH(E) "endbr64\n\tjmp *.Lsl_" #E "(%rip)\n"
+    #else
+     #define __LORICA_JMP_ARCH(E) "hint 34\n\tadrp x16, .Lsl_" #E "\n\tldr x16, [x16, :lo12:.Lsl_" #E "]\n\tbr x16\n"
+    #endif
+    #define _AliasExport_(RET,ENM,DEF,INM,SUF) \
+      __asm__(".text\n\t.globl " #ENM "\n\t.type " #ENM ",@function\n\t.p2align 4\n" \
+              #ENM ":\n\t" __LORICA_JMP_ARCH(ENM) "\t.size " #ENM ",.-" #ENM "\n" \
+              ".pushsection .data.lorica_slots,\"aw\",@progbits\n\t.p2align 3\n" \
+              ".Lsl_" #ENM ": .quad gl4es_" #INM "\n\t.popsection\n" \
+              ".pushsection .rodata.lorica_names,\"a\",@progbits\n" \
+              ".Lnm_" #ENM ": .asciz \"" #ENM "\"\n\t.popsection\n" \
+              ".pushsection lorica_disp,\"aw\",@progbits\n\t.p2align 3\n\t" \
+              ".quad .Lnm_" #ENM ", .Lsl_" #ENM ", gl4es_" #INM "\n\t.popsection\n")
+   #else
    #define _AliasExport_(RET,ENM,DEF,INM,SUF) EXPORT \
       RET APIENTRY_GL4ES ENM DEF __attribute__((alias(_MNG(gl4es_##INM,SUF))))
+   #endif
    #define NonAliasExportDecl(RET,NAME,DEF) EXPORT \
       RET APIENTRY_GL4ES NAME DEF
   #elif defined(_MSC_VER)

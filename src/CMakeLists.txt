@@ -70,24 +70,32 @@ SET(GL_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/gles.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/glstub.c
 	${CMAKE_CURRENT_SOURCE_DIR}/gl/math/matheval.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_sync.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_caps.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_state.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_vao.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_buffer.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_texture.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_fbo.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_draw.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_attrib.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_uniform.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_query.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_render.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_shader_glsl.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_shader_link.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_xfb.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/gl/gl31/gl31_stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_sync.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_caps.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_vao.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_buffer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_texture.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_fbo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_draw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_attrib.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_uniform.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_query.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_render.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_shader_glsl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_shader_link.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_xfb.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_compute.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_gl4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_dsa.c
 )
+
+# GLADIATOR necesita los headers Khronos (GLES3/gl32.h...) de third_party; solo para sus fuentes
+file(GLOB GLADIATOR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31*.c)
+set_source_files_properties(${GLADIATOR_SRC} PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/third_party/khronos")
 
 SET(GL_H
     ${CMAKE_CURRENT_SOURCE_DIR}/../version.h
@@ -160,6 +168,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux" AND NOT NO_LOADER)
 #    list(APPEND GL_SOURCES ${GLX_SOURCES})
     list(APPEND GL_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/glx/gl31_bridge.c
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/gbm.c
 	    ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx.c
 	    ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx_stubs.c
@@ -174,6 +183,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux" AND NOT NO_LOADER)
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/drmfunc.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/glx/gl31_bridge.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/rpi.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/streaming.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/utils.h
@@ -182,6 +192,7 @@ else()
     include_directories(glx)
     list(APPEND GL_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/glx/gl31_bridge.c
     )
     message(STATUS "Not on Linux: building without GLX support.")
 endif()
@@ -197,6 +208,7 @@ if(AMIGAOS4)
     )
     list(APPEND GL_H
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/glx/gl31_bridge.h
         ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx.h
         ${CMAKE_CURRENT_SOURCE_DIR}/agl/amigaos.h
         ${CMAKE_CURRENT_SOURCE_DIR}/agl/agl.h
