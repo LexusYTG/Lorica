@@ -79,4 +79,4 @@ Lorica is based on **gl4es** by **Sebastien "ptitSeb" Chevalier**, which itself 
 
 As gl4es asks, if you use Lorica or gl4es in your project, please mention gl4es in your README or about page.
 
-Released under the **MIT License**, as upstream.
+Released under the **GNU General Public License v3.0**. The original gl4es code it was forked from remains under its own MIT license and its credit is preserved; the combined work is distributed under GPL-3.0.
