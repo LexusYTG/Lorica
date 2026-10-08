@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "glx.h"
 #include "../gl/init.h"
 
@@ -175,10 +176,24 @@ static void delete_native_window(void* win) {
 }
 
 #ifndef NOEGL
-static EGLint egl_context_attrib_es2[] = {
-    EGL_CONTEXT_CLIENT_VERSION, 2,
-    EGL_NONE
-};
+/* Dinamico: ES3 si LIBGL_GL>=31 o LORICA_GL_MAX_VERSION, ES2 si no.
+ * El contexto del backend tiene que nacer en la misma version que va a
+ * usar GLADIATOR. Si nace en ES2, hardext reporta capabilities ES2
+ * (Max Draw Buffers=1) y las apps que ven "GL 3.3" en glGetString asumen
+ * minimos de GL3 (>=8 draw buffers) y rompen. */
+static EGLint* glx_get_context_attrib_es2(void)
+{
+    static EGLint attr[4] = {0, 0, 0, 0};
+    if (attr[0] == 0) {
+        int ver = 2;
+        const char *g = getenv("LIBGL_GL");
+        if ((g && atoi(g) >= 31) || getenv("LORICA_GL_MAX_VERSION")) ver = 3;
+        attr[0] = EGL_CONTEXT_CLIENT_VERSION;
+        attr[1] = ver;
+        attr[2] = EGL_NONE;
+    }
+    return attr;
+}
 
 static EGLint egl_context_attrib[] = {
     EGL_NONE
@@ -819,7 +834,7 @@ GLXContext gl4es_glXCreateContext(Display *display,
         return 0;
     }
     EGLContext shared = (shareList)?shareList->eglContext:EGL_NO_CONTEXT;
-	fake->eglContext = egl_eglCreateContext(eglDisplay, fake->eglConfigs[fake->eglconfigIdx], shared, (hardext.esversion==1)?egl_context_attrib:egl_context_attrib_es2);
+	fake->eglContext = egl_eglCreateContext(eglDisplay, fake->eglConfigs[fake->eglconfigIdx], shared, (hardext.esversion==1)?egl_context_attrib:glx_get_context_attrib_es2());
 
     CheckEGLErrors();
 
@@ -2520,7 +2535,7 @@ int createPBuffer(Display * dpy, const EGLint * egl_attribs, EGLSurface* Surface
         LOGD("Error creating PBuffer\n");
         return 0;
     }
-    (*Context) = egl_eglCreateContext(eglDisplay, Config[0], EGL_NO_CONTEXT, (hardext.esversion==1)?egl_context_attrib:egl_context_attrib_es2);
+    (*Context) = egl_eglCreateContext(eglDisplay, Config[0], EGL_NO_CONTEXT, (hardext.esversion==1)?egl_context_attrib:glx_get_context_attrib_es2());
     CheckEGLErrors();
 
     return 1;
@@ -2678,7 +2693,7 @@ int createPixBuffer(Display * dpy, int bpp, const EGLint * egl_attribs, NativePi
         return 0;
     }
 
-    (*Context) = egl_eglCreateContext(eglDisplay, pixbufConfigs[0], EGL_NO_CONTEXT, (hardext.esversion==1)?egl_context_attrib:egl_context_attrib_es2);
+    (*Context) = egl_eglCreateContext(eglDisplay, pixbufConfigs[0], EGL_NO_CONTEXT, (hardext.esversion==1)?egl_context_attrib:glx_get_context_attrib_es2());
     CheckEGLErrors();
 
     return 1;
