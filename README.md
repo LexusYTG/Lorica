@@ -1,95 +1,82 @@
 ![logo](gl4es.png "gl4es logo")
 
-GL4ES - OpenGL for GLES Hardware
-====
+# Lorica
 
-![gl4es build status](https://api.travis-ci.org/ptitSeb/gl4es.png "gl4es build status")
+**A fork of [gl4es](https://github.com/ptitSeb/gl4es), taken apart and rebuilt for deep modification.**
 
-This is a library provide OpenGL 2.x functionality for GLES2.0 accelerated Hardware (and of course also support OpenGL 1.5 function, sometimes better than when using GLES 1.1 backend)
-There is also support for GLES 1.1 Hardware, emulating OpenGL 1.5, and some OpenGL 2.x+ extensions.
+Lorica lets programs written for classic desktop OpenGL (1.x and 2.x) run on hardware that only supports OpenGL ES. That is the same job gl4es does. What's different is the intent: Lorica exists to be reshaped.
 
-GL4ES is known to work on many platform: OpenPandora, ODroid, RaspberryPI (2 and 3 at least), PocketCHIP, "otherfruit"PI (like the OrangePI), Android, iOS, x86 and x86_64 Linux (tested using mesa-egl). There is also some WIP support for AmigaOS4, using experimental GLES2 driver for Warp3D.
+---
 
-This library is based on glshim (https://github.com/lunixbochs/glshim) but as now evolved far from it, with different feature set and objectives. Go check this lib if you need things like RemoteGL or TinyGLES (for software rendering).
+> **Lorica is not gl4es.** It started from gl4es and keeps its credit, license and core ideas, but it is a separate project with its own direction. If you want the stable, general-purpose library, use [upstream gl4es](https://github.com/ptitSeb/gl4es).
 
-The focus is on compatibility and speed with a wide selection of game and software.
+## How Lorica differs from the original gl4es
 
-It has been tested successfully of a large selection of games and software, including: Minecraft, OpenMW, SeriousSam (both First and Second Encounters), RVGL (ReVolt GL), TSMC (The Secret Maryo Chronicles), TORCS, SpeedDreams, GL-117, Foobillard(plus), half life 1&2, Blender 2.68 to name just a few. I have also some success with Linux port of XNA games, using either MonoGame or FNA.
+| | **gl4es (upstream)** | **Lorica** |
+|---|---|---|
+| **Purpose** | A general-purpose, portable library, maintained for many platforms. | A fork made to be modified, with room for severe structural changes. |
+| **Code structure** | The original layout and internals. | Being reorganized and reassembled. Don't expect a file-by-file match with upstream. |
+| **Following upstream** | Evolves on its own. | Not a mirror. Upstream fixes and changes are not merged automatically. |
+| **Platforms** | Pandora, ODROID, Raspberry Pi, Android, iOS, Linux x86/x86_64 and more. | Built around the Gladiator stack. Other platforms are not a goal. |
+| **Documentation** | Complete upstream docs. | The upstream docs are a starting point, not a guarantee. Where the code has been restructured, the code wins. |
 
-Most function of OpenGL up to 1.5 are supported, with some notable exceptions:
- * Reading of Depth or Stencil buffer will not work
- * GL_FEEDBACK mode is not implemented
- * No Accum emulation
+Everything below this line describes **gl4es behaviour that Lorica inherits**. It was written for upstream and has not been re-verified on Lorica unless stated otherwise.
 
-Some known general limitations:
- * GL_SELECT as some limitation in its implementation (for example, current Depth buffer or bounded texture are not taken into account, also custom vertex shader will not work here)
- * NPOT texture are supported, but not with GL_REPEAT / GL_MIRRORED, only GL_CLAMP will work properly (unless the GLES Hardware support NPOT)
- * Multiple Color attachment on Framebuffer are not supported
- * OcclusionQuery is implemented, but with a 0 bits precision
- * Probably many other things
+---
 
-Status of the GLES2 backend
- * The FPE (Fixed Pipeline Emulator) has most OpenGL 1.5 drawing call implemented
- * The Shader Conversion is really crude, so only simple shaders will work (especially, the implicit conversion float <-> int is not handled)
- * ARB_program are supported (converted on-the-fly to glsl shaders)
- * Lighting support double-side and color separation
- * FogCoord are supported, along with secondary color
- * An ES2 context should be usable (useful for SDL2)
- * OpenGL 2.x games that have been tested include: OpenRA, GZDoom, Danger from the Deep, SuperTuxKart 0.8.1, Hammerwatch, OpenMW, half life 2, many FNA & MonoGames games (FEZ, Towerfall Ascension, Stardew Valley, Dust, Owlboy, and many other), even some Unity3D games (Teslagrad, Colin McRea Rally remake and other)...
- * glxgears works, but FlatShade is not implemented (and will probably never be), so it's slightly different than using GLES1.1 or actual GL hardware
- * GL_TEXTURE_1D, GL_TEXTURE_3D and GL_TEXTURE_RECTANGLE_ARB are not yet supported in shaders (they are supported in fixed pipeline functions), and texture 3D are just a single 2D layer for now.
- * Program that link only a GL_FRAGMENT or GL_VERTEX shader are not supported yet.
- * Some VBO are used.
+## What it does
 
-Status of the GLES1.1 backend
- * Framebuffer use FRAMEBUFFER_OES extension (that must be present in the GLES 1.1 stack)
- * Lighting doesn't support double-side or color separation
- * FogCoord or Secondary colors are not supported
- * GL_TEXTURE_3D are just a single 2D layer (the 1st layer).
- * VBO are supported, but they are emulated, even if VBO if supported in GLES1.1 driver
+Many games and apps are written for desktop OpenGL, but phones, single-board computers and other devices only provide OpenGL ES. Lorica sits in between: the program makes normal OpenGL calls, and Lorica translates them into OpenGL ES on the fly.
 
-If you use gl4es in your project (as a static or dynamic link), please mention gl4es in you readme / about / whatever.
+It supports most of OpenGL up to 1.5 and a large part of 2.x, and can target either OpenGL ES 2.0 hardware or the older ES 1.1. The focus is compatibility and speed across a wide range of software.
 
-----
+## What has worked (upstream gl4es)
 
-Compiling
-----
-How to compile and per-platform specific comment can be found [here](COMPILE.md)
+gl4es has been tested with a wide range of software, including Minecraft, OpenMW, Serious Sam, Half-Life 1 and 2, Blender 2.68+, SuperTuxKart 0.8.1, OpenRA, GZDoom, TORCS, and many FNA and MonoGame titles (FEZ, Stardew Valley, Towerfall Ascension and others), plus some Unity3D games.
 
-----
+## Known limitations
 
-GLU
-----
+**General**
+- Reading back the depth or stencil buffer doesn't work.
+- `GL_FEEDBACK` mode isn't implemented, and there's no accumulation buffer emulation.
+- `GL_SELECT` is limited (it ignores the current depth buffer and bound textures, and custom vertex shaders don't work with it).
+- Non-power-of-two textures only work properly with `GL_CLAMP`, unless the hardware supports them natively.
+- Multiple colour attachments on a framebuffer aren't supported.
+- Occlusion queries exist but report with zero bits of precision.
 
-Standard GLU do works without any issues. You can find a version [here](https://github.com/ptitSeb/GLU) if you need one.
+**OpenGL ES 2.0 backend**
+- Shader conversion is basic. Simple shaders work; complex ones may not (for example, implicit float-to-int conversion isn't handled).
+- Programs that link only a vertex shader or only a fragment shader aren't supported yet.
+- 1D, 3D and rectangle textures don't work in shaders yet (they do in the fixed pipeline), and 3D textures are just a single 2D layer.
+- `glxgears` works, but flat shading isn't implemented, so it looks slightly different from real hardware.
+- ARB programs are supported (converted to GLSL on the fly). Double-sided lighting, separate specular colour, fog coordinates and secondary colour are supported.
 
-----
+**OpenGL ES 1.1 backend**
+- Framebuffers require the `FRAMEBUFFER_OES` extension.
+- No double-sided lighting or separate specular colour, and no fog coordinates or secondary colour.
+- 3D textures are just a single 2D layer.
+- Vertex buffers are emulated even when the driver supports them.
 
-Installation
-----
+## Installation
 
-Put lib/libGL.so.1 in your `LD_LIBRARY_PATH`.
-Beware that GL4ES is meant to replace any libGL you can have on your system (like Mesa for example)
+Put `lib/libGL.so.1` in your `LD_LIBRARY_PATH`.
 
-----
+Lorica is meant to **replace** any other `libGL` on the system (such as Mesa's), so make sure it's the one that gets loaded.
 
-Usage
-----
+## Build and usage
 
-There are many environment variable to control gl4es behavior, also usable at runtime using `glHint(...)`.
+The build instructions ([COMPILE.md](COMPILE.md)) and the list of runtime options ([USAGE.md](USAGE.md)) come from upstream gl4es. Options can be set through environment variables or at runtime with `glHint(...)`. Because Lorica is being restructured, check the source if something doesn't match.
 
-See [here](USAGE.md) for all variables and what they do.
+## Also from upstream
 
-----
+- **GLU** works normally. A compatible version is available [here](https://github.com/ptitSeb/GLU).
+- Screenshots and videos of software that works: [MEDIA.md](MEDIA.md)
+- Version history: [CHANGELOG.md](CHANGELOG.md) *(upstream's history; Lorica's own changes are tracked separately)*
 
-Media (what is working already)
-----
+## Credits and license
 
-Some screenshot and youtube links of stuffs that works [here](MEDIA.md)
+Lorica is based on **gl4es** by **Sebastien "ptitSeb" Chevalier**, which itself grew out of [glshim](https://github.com/lunixbochs/glshim) by lunixbochs. Thank you to both.
 
-----
+As gl4es asks, if you use Lorica or gl4es in your project, please mention gl4es in your README or about page.
 
-Version history
-----
-
-The change log is [here](CHANGELOG.md)
+Released under the **MIT License**, as upstream.

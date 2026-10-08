@@ -58,8 +58,16 @@ static glquery_t* find_query_target_fwd(GLenum target);
 glquery_t* gl4es_occl_active(void);
 void gl4es_occl_add_samples(GLuint n);
 float gl4es_occl_tri_area(const float*, const float*, const float*, const float*, const float*, GLenum, int);
-typedef struct { glquery_t* q; GLuint be_id; } occl_pair_t;
+typedef struct { glquery_t* q; GLuint be_id; int has; GLuint cached; } occl_pair_t;
 static occl_pair_t s_occl[SC_MAX_OCCL];
+
+/* LIBGL_OCCL=0: no se usa el backend (siempre "disponible", resultado = fallback/estimado).
+   LIBGL_OCCL=1 (defecto): ANY_SAMPLES_PASSED real, con AVAILABLE asincrono. */
+static int occl_backend_enabled(void) {
+    static int m = -1;
+    if (m < 0) { const char* e = getenv("LIBGL_OCCL"); m = (e && e[0] == '0') ? 0 : 1; }
+    return m;
+}
 
 static int is_occlusion_target(GLenum t) {
     return t == GL_SAMPLES_PASSED || t == GL_ANY_SAMPLES_PASSED
@@ -76,7 +84,7 @@ static int occl_by_q(glquery_t* q) {
 static int occl_new(glquery_t* q, GLuint be_id) {
     int i;
     for (i = 0; i < SC_MAX_OCCL; i++) if (!s_occl[i].q) {
-        s_occl[i].q = q; s_occl[i].be_id = be_id; return i;
+        s_occl[i].q = q; s_occl[i].be_id = be_id; s_occl[i].has = 0; s_occl[i].cached = 0; return i;
     }
     return -1;
 }
@@ -89,18 +97,46 @@ static void occl_del(glquery_t* q) {
         s_beDeleteQueries(1, &s_occl[i].be_id);
     s_occl[i].q = NULL;
     s_occl[i].be_id = 0;
+    s_occl[i].has = 0;
 }
 
 /* Resultado de una query. SAMPLES_PASSED -> conteo estimado por software,
    anulado a 0 si el backend (ANY_SAMPLES_PASSED) dice que todo está ocluido.
    ANY_SAMPLES_PASSED[_CONSERVATIVE] -> 0/1 (nunca 0xFFFFFFFF). */
+/* ¿Esta listo el resultado del backend? NO bloquea. Si esta listo lo cachea. */
+static int occl_poll(int i) {
+    GLuint av = 0;
+    if (s_occl[i].has) return 1;
+    load_query_funcs();
+    if (!s_beGetuiv) return 1;
+    s_beGetuiv(s_occl[i].be_id, GL_QUERY_RESULT_AVAILABLE, &av);
+    if (!av) return 0;
+    s_beGetuiv(s_occl[i].be_id, GL_QUERY_RESULT, &s_occl[i].cached);
+    s_occl[i].has = 1;
+    return 1;
+}
+
+/* GL_QUERY_RESULT_AVAILABLE real (Cube2 y otros lo usan para NO bloquear la GPU). */
+static int query_available(glquery_t* q) {
+    int i;
+    if (!is_occlusion_target(q->target)) return 1;
+    i = occl_by_q(q);
+    if (i < 0) return 1;                  /* sin backend (LIBGL_OCCL=0) */
+    return occl_poll(i);
+}
+
 static GLuint64 occl_result(glquery_t* q) {
     int i = occl_by_q(q);
     GLuint any = 1;                       /* sin backend: asumir visible */
-    load_query_funcs();
-    if (i >= 0 && s_beGetuiv) {
-        any = 0;
-        s_beGetuiv(s_occl[i].be_id, GL_QUERY_RESULT, &any);
+    if (i >= 0) {
+        if (!s_occl[i].has) {             /* GL_QUERY_RESULT bloquea, como manda la spec */
+            load_query_funcs();
+            if (s_beGetuiv) {
+                s_beGetuiv(s_occl[i].be_id, GL_QUERY_RESULT, &s_occl[i].cached);
+                s_occl[i].has = 1;
+            }
+        }
+        if (s_occl[i].has) any = s_occl[i].cached;
     }
     if (q->target != GL_SAMPLES_PASSED)
         return any ? 1 : 0;
@@ -352,8 +388,9 @@ void APIENTRY_GL4ES gl4es_glBeginQuery(GLenum target, GLuint id) {
 
     if (is_occlusion_target(target)) {
         load_query_funcs();
-        if (s_beGenQueries && s_beBeginQuery) {
+        if (occl_backend_enabled() && s_beGenQueries && s_beBeginQuery) {
             int i = occl_by_q(query);
+            if (i >= 0) s_occl[i].has = 0;
             GLuint be_id = (i >= 0) ? s_occl[i].be_id : 0;
             if (!be_id) s_beGenQueries(1, &be_id);
             if (be_id) {
@@ -433,7 +470,7 @@ void APIENTRY_GL4ES gl4es_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* par
 	}
     switch (pname) {
     	case GL_QUERY_RESULT_AVAILABLE:
-    		*params = GL_TRUE;//GL_FALSE;
+    		*params = query_available(query) ? GL_TRUE : GL_FALSE;
     		break;
 		case GL_QUERY_RESULT_NO_WAIT:
     	case GL_QUERY_RESULT:
@@ -457,7 +494,7 @@ void APIENTRY_GL4ES gl4es_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* p
 
     switch (pname) {
     	case GL_QUERY_RESULT_AVAILABLE:
-    		*params = GL_TRUE;//GL_FALSE;
+    		*params = query_available(query) ? GL_TRUE : GL_FALSE;
     		break;
 		case GL_QUERY_RESULT_NO_WAIT:
     	case GL_QUERY_RESULT:
@@ -505,7 +542,7 @@ void APIENTRY_GL4ES gl4es_glGetQueryObjecti64v(GLuint id, GLenum pname, GLint64 
 
     switch (pname) {
     	case GL_QUERY_RESULT_AVAILABLE:
-    		*params = GL_TRUE;//GL_FALSE;
+    		*params = query_available(query) ? GL_TRUE : GL_FALSE;
     		break;
 		case GL_QUERY_RESULT_NO_WAIT:
     	case GL_QUERY_RESULT:
@@ -530,7 +567,7 @@ void APIENTRY_GL4ES gl4es_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint6
 
     switch (pname) {
     	case GL_QUERY_RESULT_AVAILABLE:
-    		*params = GL_TRUE;//GL_FALSE;
+    		*params = query_available(query) ? GL_TRUE : GL_FALSE;
     		break;
 		case GL_QUERY_RESULT_NO_WAIT:
     	case GL_QUERY_RESULT:
