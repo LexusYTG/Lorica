@@ -1,0 +1,10 @@
+build/
+*.new
+*.old
+*.bak
+*.revert
+*.restored
+*.pbuf
+libGL.so.1.baseline
+libGL.so.1.stub31
+lib/
