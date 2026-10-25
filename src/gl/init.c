@@ -58,6 +58,9 @@ void load_libs();
 void glx_init();
 
 static int inited = 0;
+#ifdef __ANDROID__
+extern void lorica_android_defaults(void) __attribute__((weak));
+#endif
 
 EXPORT
 void set_getmainfbsize(void (APIENTRY_GL4ES  *new_getMainFBSize)(int* w, int* h)) {
@@ -91,6 +94,9 @@ void initialize_gl4es() {
 #endif
     // only init 1 time
     if(inited++) return;
+#ifdef __ANDROID__
+    if(lorica_android_defaults) lorica_android_defaults();
+#endif
     // default init of globals
     memset(&globals4es, 0, sizeof(globals4es));
     globals4es.mergelist = 1;
