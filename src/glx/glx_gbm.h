@@ -13,7 +13,7 @@ void* OpenGBMDisplay(void* display);
 void* CreateGBMWindow(int w, int h);
 void DeleteGBMWindow(void* win);
 
-#if !defined(NOEGL) && !defined(ANDROID)
+#ifndef NOEGL
 int FindGBMConfig(EGLDisplay eglDisp, EGLConfig *configs, int numFounds);
 EGLBoolean GBMMakeCurrent(EGLDisplay eglDisp, EGLSurface draw, EGLSurface read, EGLContext ctx);
 #endif

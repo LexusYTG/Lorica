@@ -406,7 +406,7 @@ void DeleteGBMWindow(void* win)
 {
 }
 
-#if !defined(NOEGL) && !defined(ANDROID)
+#ifndef NOEGL
 int FindGBMConfig(EGLDisplay eglDisp, EGLConfig *configs, int numFounds)
 {
     return 0;
