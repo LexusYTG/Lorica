@@ -130,13 +130,14 @@ void BuildExtensionsList() {
                 "GL_ARB_multisample "
                 "GL_EXT_texture_object "
                 "GL_EXT_polygon_offset "
-                "GL_GL4ES_hint "
+                "GL_LORICA_hint "
                 "GL_ARB_draw_elements_base_vertex "
                 "GL_EXT_draw_elements_base_vertex "
                 "GL_ARB_map_buffer_range "
                 "GL_NV_blend_square "
 //                "GL_EXT_blend_logic_op "
 				);
+        { const char *c4 = getenv("LIBGL_GL4ES_COMPAT"); if(c4 && *c4=='1') strcat(extensions, "GL_GL4ES_hint "); }
         if(!globals4es.notexrect)
             strcat(extensions, "GL_ARB_texture_rectangle ");
         if(globals4es.vabgra)
@@ -247,6 +248,11 @@ static char renderer_string[128] = {0};
 static char vendor_string[128] = {0};
 extern char* gl4es_original_vendor;
 extern char* gl4es_original_renderer;
+static void lorica_ident(char *dst, size_t n, const char *raw) {
+    const char *s = getenv("LIBGL_STRINGS");   /* LIBGL_STRINGS=0: devuelve el string crudo del driver */
+    if(s && *s=='0') snprintf(dst, n, "%s", raw);
+    else snprintf(dst, n, "Lorica (%s)", raw);
+}
 
 const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
     DBG(printf("glGetString(%s)\n", PrintEnum(name));)
@@ -266,12 +272,12 @@ const GLubyte* APIENTRY_GL4ES gl4es_glGetString(GLenum name) {
             return glstate->extensions;
 		case GL_VENDOR:
             if(!vendor_string[0]) {
-                snprintf(vendor_string, 127, "%s", gl4es_original_vendor?gl4es_original_vendor:"ARM");
+                lorica_ident(vendor_string, sizeof(vendor_string), gl4es_original_vendor?gl4es_original_vendor:"ARM");
             }
 			return (GLubyte *)vendor_string;
 		case GL_RENDERER:
             if(!renderer_string[0]) {
-                snprintf(renderer_string, 127, "%s", gl4es_original_renderer?gl4es_original_renderer:"unknown");
+                lorica_ident(renderer_string, sizeof(renderer_string), gl4es_original_renderer?gl4es_original_renderer:"unknown");
             }
 			return (GLubyte *)renderer_string;
 		case GL_SHADING_LANGUAGE_VERSION:

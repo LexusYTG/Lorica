@@ -3,6 +3,7 @@
 #include "gl31.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <limits.h>
 #include <stdint.h>
 
@@ -376,6 +377,14 @@ static const char* ext_at(int index)
     return NULL;
 }
 
+/* Identidad de Lorica en GL_VENDOR/GL_RENDERER (LIBGL_STRINGS=0: string crudo del driver) */
+static void lorica_ident31(char *dst, size_t n, const char *raw)
+{
+    const char *s = getenv("LIBGL_STRINGS");
+    if (s && *s == '0') snprintf(dst, n, "%s", raw);
+    else snprintf(dst, n, "Lorica (%s)", raw);
+}
+
 const GLubyte* gl31_glGetString(GLenum name)
 {
     static GL31_TLS char renderer[192];
@@ -386,10 +395,10 @@ const GLubyte* gl31_glGetString(GLenum name)
 
     switch (name) {
         case GL_VENDOR:
-            return BE(glGetString)(GL_VENDOR);
+            { static GL31_TLS char vendor[128]; be = BE(glGetString)(GL_VENDOR); lorica_ident31(vendor, sizeof vendor, be ? (const char*)be : "ARM"); return (const GLubyte*)vendor; }
         case GL_RENDERER:
             be = BE(glGetString)(GL_RENDERER);
-            snprintf(renderer, sizeof renderer, "%s (Lorica GL31)", be ? (const char*)be : "unknown");
+            lorica_ident31(renderer, sizeof renderer, be ? (const char*)be : "unknown");
             return (const GLubyte*)renderer;
         case GL_VERSION:
             {

@@ -14,8 +14,9 @@ EXPORT void LogPrintf(const char *fmt,...);
 	#define SHUT_LOGD_NOPREFIX(...)
 	#define SHUT_LOGE(...)
 #else
-	#define SHUT_LOGD(...) if(!globals4es.nobanner) LogPrintf(__VA_ARGS__)
-	#define SHUT_LOGD_NOPREFIX(...) if(!globals4es.nobanner) LogPrintf_NoPrefix(__VA_ARGS__)
+	// Mensajes informativos: solo con LIBGL_DEBUG=1 (globals4es.verbose). Los errores siempre.
+	#define SHUT_LOGD(...) if(!globals4es.nobanner && globals4es.verbose) LogPrintf(__VA_ARGS__)
+	#define SHUT_LOGD_NOPREFIX(...) if(!globals4es.nobanner && globals4es.verbose) LogPrintf_NoPrefix(__VA_ARGS__)
 	#define SHUT_LOGE(...) if(!globals4es.nobanner) LogFPrintf(stderr,__VA_ARGS__)
 #endif
 //----------------------------------------------------------------------------

@@ -114,9 +114,9 @@ void initialize_gl4es() {
         globals4es.nobanner = IsEnvVarTrue("LIBGL_NOBANNER");
         #endif
 
-        SHUT_LOGD("Initialising gl4es\n");
 
-    if(!globals4es.nobanner) print_build_infos();
+    globals4es.verbose = IsEnvVarTrue("LIBGL_DEBUG");
+    if(!globals4es.nobanner) lorica_banner();
 
     #define env(name, global, message)                    \
         if(IsEnvVarTrue(#name)) {\
