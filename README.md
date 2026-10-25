@@ -1,8 +1,8 @@
 <div align="center">
 
-# Lorica
+<img src="media/lorica-banner.svg" alt="Lorica: desktop OpenGL on OpenGL ES" width="100%">
 
-**Desktop OpenGL on OpenGL ES. A fork of [gl4es](https://github.com/ptitSeb/gl4es), rebuilt to be modified.**
+**Run desktop OpenGL applications on GPUs that only speak OpenGL ES.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
@@ -16,17 +16,11 @@ Lorica sits between an application that speaks desktop OpenGL and a GPU
 that only speaks OpenGL ES. The application makes normal GL calls;
 Lorica translates them on the fly.
 
-It started from [gl4es](https://github.com/ptitSeb/gl4es), by Sebastien
-Chevalier, and keeps its core translation engine, its credit and its
-ideas. Everything on top of that core -- the version negotiation, the
-modern-GL layer, the GLX bridge, the DSA shim -- was written for Lorica.
-
-This is not a mirror of upstream. It is not a drop-in replacement for
-upstream either. It is a fork with a different goal: run the Gladiator
-stack well, and be easy to reshape.
-
-If you want the stable, general-purpose library that runs everywhere,
-use [upstream gl4es](https://github.com/ptitSeb/gl4es).
+Its core translation engine descends from an MIT-licensed project by
+Sebastien Chevalier and Ryan Hileman (see [Legal](#legal)). Everything on
+top of that core -- the version negotiation, the modern-GL layer, the GLX
+bridge, the DSA shim -- was written for Lorica, with one goal: run the
+Gladiator stack well, and be easy to reshape.
 
 ## What it does
 
@@ -54,7 +48,7 @@ use [upstream gl4es](https://github.com/ptitSeb/gl4es).
 ## How it is organized
 
     src/
-      gl/              core gl4es: translator, FPE, lists, textures,
+      gl/              core translator: FPE, lists, textures,
                        framebuffers, shaders, state, queries...
       gl/GLADIATOR/    the modern layer: GL 3.1 -> 4.3, DSA (4.5 ext),
                        compute, tess, transform feedback, sync, VAO,
@@ -149,8 +143,10 @@ version ceiling per application.
 Lorica is distributed under the **GNU General Public License v3.0**
 (see [LICENSE](LICENSE)).
 
-It is a fork of **gl4es**, by **Sebastien Chevalier**, distributed
-under the **MIT License**. The gl4es code included here keeps its
-original copyright and license terms; the combination is distributed
-under GPL-3.0. Full attribution is in
-[NOTICE/UPSTREAM.md](NOTICE/UPSTREAM.md).
+Portions derived from earlier work remain under their original
+**MIT License**; the required copyright and permission notice is in
+[NOTICE/LICENSE-MIT.txt](NOTICE/LICENSE-MIT.txt).
+
+*OpenGL and OpenGL ES are trademarks of their respective owners. Lorica
+is an independent project and is not affiliated with or endorsed by
+Khronos.*

@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img" aria-label="Lorica: desktop OpenGL on OpenGL ES">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0f1f"/><stop offset="1" stop-color="#1a2144"/>
+    </linearGradient>
+    <linearGradient id="steelA" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6c7688"/><stop offset="0.35" stop-color="#d5dbe6"/>
+      <stop offset="0.5" stop-color="#f1f4f9"/><stop offset="0.7" stop-color="#b3bccb"/><stop offset="1" stop-color="#5d6676"/>
+    </linearGradient>
+    <linearGradient id="steelB" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#586071"/><stop offset="0.35" stop-color="#b9c1cf"/>
+      <stop offset="0.5" stop-color="#dfe4ed"/><stop offset="0.7" stop-color="#9aa4b5"/><stop offset="1" stop-color="#4b5362"/>
+    </linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#8f9bb3"/>
+    </linearGradient>
+    <radialGradient id="gR" cx="330" cy="168" r="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff2b2b"/><stop offset="1" stop-color="#ff2b2b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gG" cx="282" cy="252" r="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22e55a"/><stop offset="1" stop-color="#22e55a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gB" cx="378" cy="252" r="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2f6bff"/><stop offset="1" stop-color="#2f6bff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="330" cy="215" r="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3a6bff" stop-opacity="0.35"/><stop offset="1" stop-color="#3a6bff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="torso">
+      <path d="M232 112 Q330 74 428 112 L448 152 Q440 252 410 332 Q330 362 250 332 Q220 252 212 152 Z"/>
+    </clipPath>
+    <clipPath id="tri"><path d="M330 166 L280 254 L380 254 Z"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="420" fill="url(#bg)"/>
+
+  <!-- perspective grid floor: the "3D" cue -->
+  <g stroke="#4a6bff" stroke-opacity="0.22" stroke-width="1" fill="none">
+    <path d="M0 330 H1200 M0 352 H1200 M0 380 H1200 M0 418 H1200"/>
+    <path d="M600 300 L-200 420 M600 300 L100 420 M600 300 L350 420 M600 300 L600 420 M600 300 L850 420 M600 300 L1100 420 M600 300 L1400 420"/>
+  </g>
+  <circle cx="330" cy="215" r="260" fill="url(#glow)"/>
+
+  <!-- shoulder plates -->
+  <path d="M222 118 Q196 128 190 168 Q220 150 246 146 Z" fill="url(#steelB)" stroke="#2b3142" stroke-width="2"/>
+  <path d="M438 118 Q464 128 470 168 Q440 150 414 146 Z" fill="url(#steelB)" stroke="#2b3142" stroke-width="2"/>
+
+  <!-- lorica segmentata: overlapping horizontal bands -->
+  <g clip-path="url(#torso)" stroke="#2b3142" stroke-width="2">
+    <path d="M200 100 H460 V150 Q330 176 200 150 Z" fill="url(#steelA)"/>
+    <path d="M200 150 Q330 176 460 150 V196 Q330 222 200 196 Z" fill="url(#steelB)"/>
+    <path d="M200 196 Q330 222 460 196 V240 Q330 266 200 240 Z" fill="url(#steelA)"/>
+    <path d="M200 240 Q330 266 460 240 V282 Q330 308 200 282 Z" fill="url(#steelB)"/>
+    <path d="M200 282 Q330 308 460 282 V320 Q330 346 200 320 Z" fill="url(#steelA)"/>
+    <path d="M200 320 Q330 346 460 320 V380 H200 Z" fill="url(#steelB)"/>
+  </g>
+  <path d="M232 112 Q330 74 428 112 L448 152 Q440 252 410 332 Q330 362 250 332 Q220 252 212 152 Z" fill="none" stroke="#2b3142" stroke-width="3"/>
+  <!-- rivets -->
+  <g fill="#2b3142" fill-opacity="0.75">
+    <circle cx="238" cy="160" r="3"/><circle cx="422" cy="160" r="3"/>
+    <circle cx="232" cy="205" r="3"/><circle cx="428" cy="205" r="3"/>
+    <circle cx="236" cy="250" r="3"/><circle cx="424" cy="250" r="3"/>
+    <circle cx="246" cy="290" r="3"/><circle cx="414" cy="290" r="3"/>
+  </g>
+
+  <!-- the classic OpenGL RGB triangle on the chest -->
+  <g clip-path="url(#tri)">
+    <rect x="270" y="160" width="120" height="100" fill="#05070f"/>
+    <rect x="270" y="160" width="120" height="100" fill="url(#gR)"/>
+    <rect x="270" y="160" width="120" height="100" fill="url(#gG)"/>
+    <rect x="270" y="160" width="120" height="100" fill="url(#gB)"/>
+  </g>
+  <path d="M330 166 L280 254 L380 254 Z" fill="none" stroke="#e8f0ff" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- vertices -->
+  <circle cx="330" cy="166" r="5" fill="#ff2b2b" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="280" cy="254" r="5" fill="#22e55a" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="380" cy="254" r="5" fill="#2f6bff" stroke="#fff" stroke-width="1.5"/>
+
+  <!-- title block -->
+  <text x="560" y="206" font-family="'Trebuchet MS','Segoe UI',Verdana,sans-serif" font-size="118" font-weight="800" letter-spacing="14" fill="url(#title)">LORICA</text>
+  <text x="564" y="252" font-family="'Segoe UI',Verdana,sans-serif" font-size="30" fill="#c9d3ea">Desktop OpenGL on OpenGL ES</text>
+
+  <!-- API chips -->
+  <g font-family="'Courier New',Courier,monospace" font-size="22" font-weight="700">
+    <rect x="564" y="282" width="150" height="42" rx="8" fill="#10183a" stroke="#4a6bff" stroke-width="2"/>
+    <text x="639" y="311" text-anchor="middle" fill="#9db4ff">OpenGL 4.3</text>
+    <text x="737" y="311" text-anchor="middle" fill="#6f7ca3" font-size="28">&#8594;</text>
+    <rect x="760" y="282" width="176" height="42" rx="8" fill="#10183a" stroke="#22e55a" stroke-width="2"/>
+    <text x="848" y="311" text-anchor="middle" fill="#8ff0ac">OpenGL ES 3.x</text>
+  </g>
+  <text x="564" y="364" font-family="'Courier New',Courier,monospace" font-size="18" fill="#6f7ca3">glDrawArrays(GL_TRIANGLES, 0, 3);</text>
+</svg>
