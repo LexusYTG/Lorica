@@ -1048,6 +1048,7 @@ GLXContext gl4es_glXCreateContextAttribsARB(Display *display, GLXFBConfig config
     }
 }
 
+extern void lorica_ahb_context_destroyed(void);
 void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
     DBG(printf("glXDestroyContext(%p, %p), fbcontext_count=%d, ctx_type=%d\n", display, ctx, fbcontext_count, (ctx)?ctx->contextType:0);)
     if(globals4es.usefb)
@@ -1092,6 +1093,7 @@ void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
         LOAD_EGL(eglDestroySurface);
         
 		EGLBoolean result = egl_eglDestroyContext(eglDisplay, ctx->eglContext);
+		lorica_ahb_context_destroyed();
         ctx->eglContext = 0;
         if (ctx->eglSurface != 0) {
             if(globals4es.usefb!=1 || !fbcontext_count) { // (This may cause troble on Pandora, has some driver doesn't seems to like to many Creation of the surface)
@@ -1397,6 +1399,7 @@ Bool gl4es_glXMakeCurrent(Display *display,
                         LOAD_EGL(eglDestroyContext);
                         DBG(printf("Remove old Cotnext %p, new is %p\n", context->eglContext, eglCtx);)
                         egl_eglDestroyContext(eglDisplay, context->eglContext);
+                        lorica_ahb_context_destroyed();
                     }
                     context->eglContext = eglCtx;
                     // update, that context is a created emulated one...
