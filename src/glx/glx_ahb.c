@@ -1,4 +1,14 @@
 // Presentacion cero-copia: AHardwareBuffer + DRI3 (modifier 1256) + Present
+// AHardwareBuffer solo existe en Android. En Linux/otros se compilan stubs para que glx.c enlace sin cambios.
+#ifndef __ANDROID__
+#include <X11/Xlib.h>
+#include <EGL/egl.h>
+void lorica_ahb_context_destroyed(void) { }
+int lorica_ahb_present(Display *dpy, Window win, int w, int h, EGLDisplay ed) {
+    (void)dpy; (void)win; (void)w; (void)h; (void)ed;
+    return 0;
+}
+#else
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -481,3 +491,5 @@ int lorica_ahb_present(Display *dpy, Window win, int w, int h, EGLDisplay ed) {
     S.cur ^= 1;
     return 1;
 }
+
+#endif /* __ANDROID__ */
