@@ -2904,7 +2904,7 @@ void BlitEmulatedPixmap(int win) {
         return;
     }
     { extern int lorica_ahb_present(Display*, Window, int, int, EGLDisplay); if(reverse && hardext.android && lorica_ahb_present(dpy, (Window)drawable, Width, Height, eglDisplay)) return; }
-    static int direct_copy = 1;
+    static int direct_copy = 0; /* eglCopyBuffers reports success without drawing on desktop Mesa: use glReadPixels + XPutImage */
     if(direct_copy) {
         if(hardext.android)
             direct_copy = 0;
