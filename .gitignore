@@ -8,3 +8,7 @@ build/
 libGL.so.1.baseline
 libGL.so.1.stub31
 lib/
+*.o
+*.a
+*.so
+*.so.*
