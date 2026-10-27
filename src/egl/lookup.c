@@ -11,6 +11,7 @@
 #include "../glx/hardext.h"
 
 extern void *gl4es_glXGetProcAddress(const char *name);
+extern void *lorica_egl_lookup(const char *name);
 
 void eglStub(void *x, ...) {
     return;
