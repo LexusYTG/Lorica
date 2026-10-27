@@ -62,9 +62,9 @@ $(SHARED_LIB): $(OBJECTS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 # ---- pruebas ----
-TESTS = tests/test_uniform tests/test_integration tests/test_gl32 tests/test_gl33 tests/test_gl4 tests/test_dsa
+TESTS = ../../../TEST/gladiator/test_uniform ../../../TEST/gladiator/test_integration ../../../TEST/gladiator/test_gl32 ../../../TEST/gladiator/test_gl33 ../../../TEST/gladiator/test_gl4 ../../../TEST/gladiator/test_dsa
 
-tests/%: tests/%.c gl31.h $(STATIC_LIB)
+../../../TEST/gladiator/%: ../../../TEST/gladiator/%.c gl31.h $(STATIC_LIB)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. $< $(STATIC_LIB) -lpthread -o $@
 
 test: $(TESTS)

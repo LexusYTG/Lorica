@@ -114,6 +114,18 @@ static void delPBuffer(int j)
     pbuffersize[j].Context = NULL;
     // should pack, but I think it's useless for common use 
 }
+static int pbuf_owns_context(EGLContext c) {
+    if (c == EGL_NO_CONTEXT) return 0;
+    for (int i=0; i<pbufferlist_size; i++)
+        if (pbufferlist[i] && pbuffersize[i].Context == c) return 1;
+    return 0;
+}
+static int pbuf_owns_surface(EGLSurface sf) {
+    if (sf == EGL_NO_SURFACE) return 0;
+    for (int i=0; i<pbufferlist_size; i++)
+        if (pbufferlist[i] && pbuffersize[i].Surface == sf) return 1;
+    return 0;
+}
 void BlitEmulatedPixmap(int win);
 int createPBuffer(Display * dpy, const EGLint * egl_attribs, EGLSurface* Surface, EGLContext* Context, EGLConfig* Config, int redBits, int greenBits, int blueBits, int alphaBits, int samplebuffers, int samples);
 GLXPbuffer addPixBuffer(Display *dpy, EGLSurface surface, EGLConfig Config, int Width, int Height, EGLContext Context, Pixmap pixmap, int depth, int emulated);
@@ -1092,7 +1104,9 @@ void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
         LOAD_EGL(eglDestroyContext);
         LOAD_EGL(eglDestroySurface);
         
-		EGLBoolean result = egl_eglDestroyContext(eglDisplay, ctx->eglContext);
+		EGLBoolean result = EGL_TRUE;
+		if(!pbuf_owns_context(ctx->eglContext))   // el contexto del pbuffer de la ventana es compartido: lo libera delPixBuffer
+			result = egl_eglDestroyContext(eglDisplay, ctx->eglContext);
 		lorica_ahb_context_destroyed();
         ctx->eglContext = 0;
         if (ctx->eglSurface != 0) {
@@ -1101,7 +1115,7 @@ void gl4es_glXDestroyContext(Display *display, GLXContext ctx) {
                 if(ctx->shared_eglsurface && (--(*ctx->shared_eglsurface))>0)
 					destroySurf = 0;
                 if(destroySurf) {
-					if(!globals4es.glxrecycle) {
+					if(!globals4es.glxrecycle && !pbuf_owns_surface(ctx->eglSurface)) {
 						DBG(printf("  egDestroySurface(%p, %p), drawable=%p\n", eglDisplay, ctx->eglSurface, (void*)ctx->drawable);)
 						egl_eglDestroySurface(eglDisplay, ctx->eglSurface);
 						RecycleDelSurface(ctx->drawable);

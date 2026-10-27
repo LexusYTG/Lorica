@@ -264,44 +264,44 @@ macro(create_test test_name test_filename calls_count tolerance)
         add_test(${test_name}
             ${CMAKE_COMMAND}
             -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
             -D TEST_FILENAME=${test_filename}
             -D CALLS=${calls_count}
             -D TOLERANCE=${tolerance}
             -D EXTRACT_RANGE=${ARGV4}
-            -P ${CMAKE_SOURCE_DIR}/test.cmake)
+            -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
     elseif (${ARGC} EQUAL 6)
         if (${ARGV4} STREQUAL "NOEXTRACT_RANGE")
             add_test(${test_name}
                 ${CMAKE_COMMAND}
                 -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-                -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+                -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
                 -D TEST_FILENAME=${test_filename}
                 -D CALLS=${calls_count}
                 -D TOLERANCE_GLES1=${tolerance}
                 -D TOLERANCE_GLES2=${ARGV5}
-                -P ${CMAKE_SOURCE_DIR}/test.cmake)
+                -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
         else (${ARGV4} STREQUAL "NOEXTRACT_RANGE")
             add_test(${test_name}
                 ${CMAKE_COMMAND}
                 -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-                -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+                -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
                 -D TEST_FILENAME=${test_filename}
                 -D CALLS=${calls_count}
                 -D TOLERANCE_GLES1=${tolerance}
                 -D TOLERANCE_GLES2=${ARGV5}
                 -D EXTRACT_RANGE=${ARGV4}
-                -P ${CMAKE_SOURCE_DIR}/test.cmake)
+                -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
         endif (${ARGV4} STREQUAL "NOEXTRACT_RANGE")
     else (${ARGC} EQUAL 5)
         add_test(${test_name}
             ${CMAKE_COMMAND}
             -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
             -D TEST_FILENAME=${test_filename}
             -D CALLS=${calls_count}
             -D TOLERANCE=${tolerance}
-            -P ${CMAKE_SOURCE_DIR}/test.cmake)
+            -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
     endif (${ARGC} EQUAL 5)
 endmacro(create_test)
 
@@ -310,23 +310,23 @@ macro(create_test_GLES test_name GLES test_filename calls_count tolerance)
         add_test(${test_name}_GLES${GLES}
             ${CMAKE_COMMAND}
             -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
             -D TEST_FILENAME=${test_filename}
             -D CALLS=${calls_count}
             -D TOLERANCE=${tolerance}
             -D EXTRACT_RANGE=${ARGV4}
             -D GLES_FORCED=${GLES}
-            -P ${CMAKE_SOURCE_DIR}/test.cmake)
+            -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
     else (${ARGC} EQUAL 5)
         add_test(${test_name}_GLES${GLES}
             ${CMAKE_COMMAND}
             -D LIBRARY_FOLDER=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
-            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/tests
+            -D TESTS_DIRECTORY=${CMAKE_SOURCE_DIR}/TEST/legacy
             -D TEST_FILENAME=${test_filename}
             -D CALLS=${calls_count}
             -D TOLERANCE=${tolerance}
             -D GLES_FORCED=${GLES}
-            -P ${CMAKE_SOURCE_DIR}/test.cmake)
+            -P ${CMAKE_SOURCE_DIR}/TEST/legacy/test.cmake)
     endif (${ARGC} EQUAL 5)
 endmacro(create_test_GLES)
 

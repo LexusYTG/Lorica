@@ -93,7 +93,7 @@ End-to-end on a Mali-G52 MC2 through the Gladiator stack (bionic
 - Real applications: Red Eclipse 1.6, Luanti 5.10, SuperTuxKart, running
   through Scutum with Lorica loaded where the app requests modern GL.
 
-The standalone test is `tests/gl33_core_glx.c`:
+The standalone test is `TEST/glx/gl33_core_glx.c`:
 
     gcc gl33_core_glx.c -o gl33_core_glx -I../include -L../lib -l:libGL.so.1 -lX11
     LIBGL_GL=43 ./gl33_core_glx 3 3

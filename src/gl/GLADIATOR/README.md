@@ -53,7 +53,7 @@ Lorica es un traductor de OpenGL 3.1 core a GLES 3.0+ que permite utilizar API d
   puente no crea contextos ES 3.x (cae a ES 2 con un aviso) y GLADIATOR queda inactivo. Soportar `usefbo` con GL3+
   exigiría que GLADIATOR trate el main FBO como "framebuffer 0" y que el volcado no toque su estado: no está hecho.
 
-Prueba del puente (EGL falso, sin GPU): `src/glx/tests/test_gl31_bridge.c`.
+Prueba del puente (EGL falso, sin GPU): `TEST/bridge/test_gl31_bridge.c`.
 
 ## Compilación
 
