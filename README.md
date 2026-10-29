@@ -54,14 +54,18 @@ Gladiator stack well, and be easy to reshape.
                        compute, tess, transform feedback, sync, VAO,
                        shader link, GLSL conversion, capability probing
       glx/             GLX front-end, dispatch table, X11 plumbing
+      egl/             EGL wrapper (EGL on top of GLX), see "EGL and GLX"
     include/           public headers
-    tests/             gl33_core_glx (core context sweep), test_version
+    TEST/              LoriTest.c, the single test program
+    scripts/           termux-install.sh (build, verify, install, test)
     spec/              scripts that generate the extension tables
+    documentación/     full documentation (implemented, not implemented,
+                       limitations, known bugs, EGL/GLX)
 
 The `GLADIATOR/` directory is the entry point for anything the core
 does not cover. Files named `gl31_*` there implement the 3.x/4.x
-surface; `GL32.md`, `GL33.md`, `GL4.md` and `GL45.md` document, version
-by version, what is implemented and what is not.
+surface. What is implemented, what is not, and the known limits are
+documented in [`documentación/`](documentación/00-indice.md).
 
 ## Supported versions
 
@@ -93,10 +97,17 @@ End-to-end on a Mali-G52 MC2 through the Gladiator stack (bionic
 - Real applications: Red Eclipse 1.6, Luanti 5.10, SuperTuxKart, running
   through Scutum with Lorica loaded where the app requests modern GL.
 
-The standalone test is `TEST/glx/gl33_core_glx.c`:
+The test program is `TEST/LoriTest.c`. On Termux the installer builds
+and runs it for you:
 
-    gcc gl33_core_glx.c -o gl33_core_glx -I../include -L../lib -l:libGL.so.1 -lX11
-    LIBGL_GL=43 ./gl33_core_glx 3 3
+    bash scripts/termux-install.sh
+
+or, by hand, against the built library:
+
+    gcc TEST/LoriTest.c -o loritest -Iinclude -Llib -l:libGL.so.1 -lX11 -lm
+    LD_LIBRARY_PATH=lib LIBGL_GL=43 ./loritest --test
+
+A passing run prints `RESULTADO: TODO OK`.
 
 ## What it does not do
 
@@ -114,8 +125,8 @@ limits:
 - **Transform feedback object getters**, `glGetnUniform*`, and
   `glGetVertexArrayIndexed64iv` are not implemented.
 
-The per-version notes in `src/gl/GLADIATOR/GL32.md`, `GL33.md`, `GL4.md`
-and `GL45.md` list each of these against the affected function.
+`documentación/03-no-implementado-y-limitaciones.md` lists each of these
+against the affected function.
 
 ## Building
 
@@ -126,6 +137,32 @@ and `GL45.md` list each of these against the affected function.
 The resulting shared library lands in `lib/libGL.so.1`. `NOX11=OFF`
 enables the GLX front-end; `NOEGL=OFF` enables EGL; `GBM=OFF` skips
 DRM.
+
+## EGL and GLX
+
+Lorica touches EGL and GLX in two opposite directions:
+
+- **GLX on top of EGL (`libGL.so.1`).** The GLX front-end that
+  applications link against is implemented with the *real* EGL of the
+  device: `glXChooseFBConfig` becomes `eglChooseConfig`,
+  `glXCreateContext*` becomes `eglCreateContext`, `glXMakeCurrent`
+  creates the EGL surface, `glXSwapBuffers` becomes `eglSwapBuffers`
+  (or a pbuffer copy to the X window, depending on `LIBGL_FB`).
+- **EGL on top of GLX (`libEGL.so.1`, optional).** Built with
+  `-DEGL_WRAPPER=ON`, an EGL library that implements the EGL API with
+  Lorica's own `glX*` calls, for programs that ask for desktop OpenGL
+  through EGL (`EGL_OPENGL_API`). An `EGLDisplay` is an X11 `Display*`,
+  an `EGLConfig` is a `GLXFBConfig`, an `EGLContext` is a `GLXContext`.
+
+Both paths are described in detail in
+[`documentación/05-egl-glx.md`](documentación/05-egl-glx.md).
+
+## Project goals
+
+Lorica aims at **compatibility and correctness**: making desktop OpenGL
+applications run, and being honest about what GLES cannot express. It is
+not a performance project, and performance is not measured or tracked in
+this repository.
 
 ## Gladiator integration
 

@@ -252,7 +252,7 @@ now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 fmt_ms() { printf '%d.%d s' $(( $1 / 1000 )) $(( ($1 % 1000) / 100 )); }
 
 run_tests() {
-  local spec name src args envs bin t0 out rc st det fps i
+  local spec name src args envs bin t0 out rc st det i
   local specs=(
     "LoriTest 4.3 (with fallback)|LoriTest.c|--test|LIBGL_GL=43"
     "LoriTest 3.3|LoriTest.c|--test 3 3|LIBGL_GL=43"
@@ -292,8 +292,6 @@ run_tests() {
       st=ok
       det="$(printf '%s\n' "$out" | grep -m1 '^USANDO:' | sed 's/^USANDO: *//')"
       [ -n "$det" ] || det="$(printf '%s\n' "$out" | grep -m1 '^GL_VERSION=' | sed 's/^GL_VERSION=//')"
-      fps="$(printf '%s\n' "$out" | grep -m1 '^FPS_PROMEDIO=' | sed 's/^FPS_PROMEDIO=//')"
-      [ -n "$fps" ] && det="${det:+$det · }$fps FPS"
     fi
     printf '%s' "$out" | grep -Eq 'AHB cero-copia activo|AHB zero-copy active' && det="${det:+$det · }AHB zero-copy"
     if [ "$st" = fail ]; then
@@ -344,7 +342,7 @@ printf '\n'
 if [ "$FAILED" = 0 ]; then
   if [ "$DO_INSTALL" = 1 ]; then WHAT="built, verified and installed"; else WHAT="built and verified (not installed)"; fi
   printf '  %s%sDone.%s Lorica is %s.\n' "$C_B" "$C_GRN" "$C_RST" "$WHAT"
-  info "try it with: DISPLAY=:0 glxinfo | grep -i renderer   (or glmark2)"
+  info "try it with: DISPLAY=:0 glxinfo | grep -i renderer"
   [ "$TESTS_RAN" = 0 ] && info "to run the tests later: bash scripts/termux-install.sh -y"
   exit 0
 else
