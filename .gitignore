@@ -12,3 +12,21 @@ lib/
 *.a
 *.so
 *.so.*
+
+# Precompilados y generados por el build (se regeneran al compilar)
+*.d
+*.lo
+*.obj
+*.dylib
+*.dll
+*.exe
+*.gcda
+*.gcno
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Testing/
+/loritest
+core
