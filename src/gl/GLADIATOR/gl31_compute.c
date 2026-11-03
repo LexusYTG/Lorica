@@ -29,6 +29,7 @@ void gl31_glDispatchCompute(GLuint x, GLuint y, GLuint z)
 {
     if (!need_es31("glDispatchCompute (backend sin ES 3.1)")) return;
     if (!have_program()) { gl31_set_error(GL_INVALID_OPERATION); return; }
+    gl31_ssbo_sync();
     BE(glDispatchCompute)(x, y, z);
 }
 
@@ -37,6 +38,7 @@ void gl31_glDispatchComputeIndirect(GLintptr offset)
     if (!need_es31("glDispatchComputeIndirect (backend sin ES 3.1)")) return;
     if (offset < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!have_program()) { gl31_set_error(GL_INVALID_OPERATION); return; }
+    gl31_ssbo_sync();
     BE(glDispatchComputeIndirect)(offset);
 }
 
@@ -99,14 +101,20 @@ void gl31_glFramebufferParameteri(GLenum target, GLenum pname, GLint param)
         gl31_set_error(GL_INVALID_ENUM);
         return;
     }
-    BE(glFramebufferParameteri)(target, pname, param);
+    {   int rd_; GLenum rt_ = gl31_fbo_redir(target, &rd_);
+        BE(glFramebufferParameteri)(rt_, pname, param);
+        gl31_fbo_redir_end(rd_, 0);
+    }
 }
 
 void gl31_glGetFramebufferParameteriv(GLenum target, GLenum pname, GLint* params)
 {
     if (!params) return;
     if (!need_es31("glGetFramebufferParameteriv (backend sin ES 3.1)")) return;
-    BE(glGetFramebufferParameteriv)(target, pname, params);
+    {   int rd_; GLenum rt_ = gl31_fbo_redir(target, &rd_);
+        BE(glGetFramebufferParameteriv)(rt_, pname, params);
+        gl31_fbo_redir_end(rd_, 0);
+    }
 }
 
 /* ---------- program interface query ---------- */
@@ -162,6 +170,11 @@ void gl31_glGetProgramResourceiv(GLuint program, GLenum iface, GLuint index, GLs
     if (!need_es31("glGetProgramResourceiv (backend sin ES 3.1)")) return;
     if (!prog_linked(program)) return;
     BE(glGetProgramResourceiv)(program, iface, index, propCount, props, bufSize, length, params);
+    if (iface == GL_SHADER_STORAGE_BLOCK && params) {      /* el binding que ve la app es el de glShaderStorageBlockBinding */
+        GLsizei k;
+        for (k = 0; k < propCount && k < bufSize; k++)
+            if (props[k] == GL_BUFFER_BINDING) params[k] = gl31_program_ssbo_binding(program, index, params[k]);
+    }
     if (iface != GL_UNIFORM || !params) return;
     for (i = 0; i < propCount; i++) if (props[i] == GL_ACTIVE_VARIABLES) scalar = 0;
     if (!scalar) return;
@@ -174,15 +187,6 @@ void gl31_glGetProgramResourceiv(GLuint program, GLenum iface, GLuint index, GLs
             BE(glGetProgramResourceName)(program, iface, index, (GLsizei)sizeof nm, &l, nm);
             params[i] = (GLint)gl31_program_uniform_type(program, nm, (GLenum)params[i]);
         }
-}
-
-/* Los bloques SSBO solo se pueden enlazar con layout(binding=N) en ES: no hay equivalente de
- * glShaderStorageBlockBinding (ver GL4.md). */
-void gl31_glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding)
-{
-    (void)program; (void)index; (void)binding;
-    gl31_stub_warn("glShaderStorageBlockBinding (usar layout(binding=N) en el shader)");
-    gl31_set_error(GL_INVALID_OPERATION);
 }
 
 /* ---------- separate shader objects ---------- */

@@ -126,7 +126,7 @@ static const gl31_entry_t gl31_table[] = {
 
     /* ---- bloque 2: funciones que existian pero no estaban publicadas ---- */
     D(glGetBooleani_v), D(glPointParameterf), D(glPointParameteri), D(glPointParameterfv),
-    D(glPointParameteriv), D(glLogicOp), D(glFramebufferTexture1D), D(glTexStorage1D),
+    D(glPointParameteriv), D(glLogicOp), D(glClipControl), D(glFramebufferTexture1D), D(glTexStorage1D),
 
     /* ---- bloque 3: OpenGL 3.0 / 3.1 / 3.2 ---- */
     D(glClientWaitSync), D(glCompressedTexImage1D), D(glCompressedTexSubImage1D),

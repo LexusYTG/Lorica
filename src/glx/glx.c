@@ -3073,7 +3073,7 @@ const char *gl4es_glXQueryExtensionsString(Display *display, int screen) {
 const char *gl4es_glXQueryServerString(Display *display, int screen, int name) {
     DBG(printf("glXQueryServerString(%p, %d, %d)\n", display, screen, name);)
     switch (name) {
-        case GLX_VENDOR: return "ptitSeb";
+        case GLX_VENDOR: return "Lexus";
         case GLX_VERSION: return "1.4";
         case GLX_EXTENSIONS: return gl4es_glXQueryExtensionsString(display, screen);
     }
@@ -3102,7 +3102,7 @@ Bool gl4es_glXQueryVersion(Display *display, int *major, int *minor) {
 const char *gl4es_glXGetClientString(Display *display, int name) {
     DBG(printf("glXGetClientString(%p, %d)\n", display, name);)
     switch (name) {
-        case GLX_VENDOR: return "ptitSeb";
+        case GLX_VENDOR: return "Lexus";
         case GLX_VERSION: return "1.4";
         case GLX_EXTENSIONS: return gl4es_glXQueryExtensionsString(display, 0);
     }

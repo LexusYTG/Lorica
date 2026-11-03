@@ -619,6 +619,248 @@ static char* demote_doubles(char* s, int* did)
 }
 
 /* Devuelve memoria malloc'd (free) o NULL y rellena err. */
+
+/* ---------- uniforms propios y wrapper de main() (ver gl31.h) ---------- */
+static GL31_TLS gl31_conv_opts_t g_opts;
+static GL31_TLS gl31_conv_info_t g_info;
+void gl31_glsl_set_opts(const gl31_conv_opts_t* o) { if (o) g_opts = *o; else memset(&g_opts, 0, sizeof g_opts); }
+void gl31_glsl_get_info(gl31_conv_info_t* out) { if (out) *out = g_info; }
+
+/* Renombra la definicion `void main(` a `void lorica_main(`. *found = 0 si no existe. */
+static char* rename_main(char* s, int* found)
+{
+    const char* p = s;
+    *found = 0;
+    while ((p = find_word(p, "main")) != NULL) {
+        const char* b = p; const char* q = p + 4;
+        while (b > s && isspace((unsigned char)b[-1])) b--;
+        while (isspace((unsigned char)*q)) q++;
+        if (b - s >= 4 && strncmp(b - 4, "void", 4) == 0 && (b - 4 == s || !is_id((unsigned char)b[-5])) && *q == '(') {
+            sb_t o = {0, 0, 0, 0};
+            sb_cat(&o, s, (size_t)(p - s));
+            sb_str(&o, "lorica_main");
+            sb_str(&o, p + 4);
+            free(s);
+            if (o.oom) { free(o.p); return NULL; }
+            *found = 1;
+            return o.p;
+        }
+        p += 4;
+    }
+    return s;
+}
+
+/* Cuantas clip distances usa el VS (1..8). Una redeclaracion con tamano cuenta como tamano. */
+static int clipdist_count(const char* s)
+{
+    static const char w[] = "gl_ClipDistance";
+    size_t L = sizeof w - 1;
+    const char* p = s; int n = 0;
+    while ((p = find_word(p, w)) != NULL) {
+        const char* b = p; const char* q = p + L; int decl = 0;
+        while (b > s && isspace((unsigned char)b[-1])) b--;
+        if (b - s >= 5 && strncmp(b - 5, "float", 5) == 0 && (b - 5 == s || !is_id((unsigned char)b[-6]))) decl = 1;
+        while (isspace((unsigned char)*q)) q++;
+        if (*q == '[') {
+            q++;
+            while (isspace((unsigned char)*q)) q++;
+            if (isdigit((unsigned char)*q)) { int v = atoi(q); int need = decl ? v : v + 1; if (need > n) n = need; }
+            else if (!decl) n = 8;                 /* indice no constante */
+        } else n = 8;
+        p += L;
+    }
+    if (n < 1) n = 8;
+    return n > 8 ? 8 : n;
+}
+
+/* Borra (con espacios) la redeclaracion `[calificadores] float lorica_cd[...];` del usuario */
+static void strip_cd_decl(char* s)
+{
+    char* p = s;
+    while ((p = (char*)find_word(p, "lorica_cd")) != NULL) {
+        char* b = p; char* q = p + 9;
+        while (b > s && isspace((unsigned char)b[-1])) b--;
+        if (b - s >= 5 && strncmp(b - 5, "float", 5) == 0 && (b - 5 == s || !is_id((unsigned char)b[-6]))) {
+            char* st = b - 5;
+            for (;;) {      /* retroceder sobre los calificadores */
+                char* t = st; size_t k;
+                static const char* const quals[] = { "out", "highp", "mediump", "lowp", "smooth", "flat", "centroid", "invariant", NULL };
+                int hit = 0;
+                while (t > s && isspace((unsigned char)t[-1])) t--;
+                for (k = 0; quals[k]; k++) {
+                    size_t ql = strlen(quals[k]);
+                    if (t - s >= (long)ql && strncmp(t - ql, quals[k], ql) == 0 && (t - ql == s || !is_id((unsigned char)t[-(long)ql - 1]))) { st = t - ql; hit = 1; break; }
+                }
+                if (!hit) break;
+            }
+            while (*q && *q != ';') q++;
+            for (; st <= q && *st; st++) if (*st != '\n') *st = ' ';
+            p = q;
+        } else p += 9;
+    }
+}
+
+/* Aplica las reescrituras de uniforms propios. hdr va antes del codigo; tail, despues.
+ * Devuelve 0 solo si no hay memoria. */
+static int lu_transform(char** ps, GLenum type, const gl31_conv_opts_t* op, sb_t* hdr, sb_t* tail)
+{
+    char* s = *ps; char buf[256]; int found = 0;
+    if (type == GL_VERTEX_SHADER && op->last_vs) {
+        int wrote_ps = find_word(s, "gl_PointSize") != NULL;
+        int cdn = 0, gate_n = 0;
+        if (!gl31_caps.clip_distance && find_word(s, "gl_ClipDistance")) {
+            cdn = clipdist_count(s);
+            if (!(s = repl_word(s, "gl_ClipDistance", "lorica_cd"))) { *ps = NULL; return 0; }
+            strip_cd_decl(s);
+            snprintf(buf, sizeof buf, "out highp float lorica_cd[%d];\n", cdn);
+            sb_str(hdr, buf);
+        }
+        /* Con EXT_clip_cull_distance el backend recorta siempre lo que escribe el shader; en GL de
+         * escritorio solo si GL_CLIP_DISTANCEi esta habilitado: el wrapper neutraliza las no habilitadas. */
+        if (gl31_caps.clip_distance && find_word(s, "gl_ClipDistance")) gate_n = clipdist_count(s);
+        s = rename_main(s, &found);
+        if (!s) { *ps = NULL; return 0; }
+        if (found) {
+            sb_str(hdr, "uniform highp vec4 lorica_vs; uniform highp vec4 lorica_vs2;\n");
+            sb_str(tail, "\nvoid main() {\n    lorica_main();\n"
+                         "    if (lorica_vs.z > 0.5) gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;\n"
+                         "    if (lorica_vs2.x > 0.5 && gl_Position.w > 0.0) gl_Position.z = clamp(gl_Position.z, -gl_Position.w, gl_Position.w);\n"
+                         "    if (lorica_vs.w > 0.5) gl_Position.y = -gl_Position.y;\n");
+            sb_str(tail, wrote_ps ? "    if (lorica_vs.y > 0.5) gl_PointSize = lorica_vs.x;\n"
+                                  : "    gl_PointSize = lorica_vs.x > 0.0 ? lorica_vs.x : 1.0;\n");
+            if (gate_n > 0) {
+                int gi;
+                sb_str(tail, "    int lorica_m = int(lorica_vs2.y + 0.5);\n");
+                for (gi = 0; gi < gate_n; gi++) {
+                    snprintf(buf, sizeof buf, "    if (((lorica_m >> %d) & 1) == 0) gl_ClipDistance[%d] = 1.0;\n", gi, gi);
+                    sb_str(tail, buf);
+                }
+            }
+            sb_str(tail, "}\n");
+            g_info.lu = 1;
+        }
+        g_info.cd_n = cdn;
+    } else if (type == GL_FRAGMENT_SHADER) {
+        int pc = find_word(s, "gl_PointCoord") != NULL;
+        int n = op->fs_cd;
+        if (pc || n > 0) { sb_str(hdr, "uniform highp vec4 lorica_fs;\n"); g_info.lu = 1; }
+        if (pc) {
+            sb_str(hdr, "highp vec2 lorica_pc() { return lorica_fs.x > 0.5 ? vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y) : gl_PointCoord; }\n");
+            if (!(s = repl_word(s, "gl_PointCoord", "lorica_pc()"))) { *ps = NULL; return 0; }
+        }
+        if (n > 0) {
+            int i;
+            snprintf(buf, sizeof buf, "in highp float lorica_cd[%d];\n", n);
+            sb_str(hdr, buf);
+            s = rename_main(s, &found);
+            if (!s) { *ps = NULL; return 0; }
+            if (found) {
+                sb_str(tail, "\nvoid main() {\n    int lorica_m = int(lorica_fs.y + 0.5);\n");
+                for (i = 0; i < n; i++) {
+                    snprintf(buf, sizeof buf, "    if (((lorica_m >> %d) & 1) != 0 && lorica_cd[%d] < 0.0) discard;\n", i, i);
+                    sb_str(tail, buf);
+                }
+                sb_str(tail, "    lorica_main();\n}\n");
+            }
+        }
+    }
+    *ps = s;
+    return 1;
+}
+
+/* ---- SSBO sin layout(binding): binding unico para poder resolver glShaderStorageBlockBinding ---- */
+static int ssbo_insert(char** ps, size_t pos, const char* txt)
+{
+    size_t n = strlen(*ps), t = strlen(txt);
+    char* p = (char*)realloc(*ps, n + t + 1);
+    if (!p) return 0;
+    memmove(p + pos + t, p + pos, n - pos + 1);
+    memcpy(p + pos, txt, t);
+    *ps = p;
+    return 1;
+}
+
+static char* assign_ssbo_bindings(char* s, gl31_conv_info_t* info)
+{
+    unsigned used = 0;
+    size_t i, n;
+    int pass;
+    for (pass = 0; pass < 2; pass++) {
+        n = strlen(s);
+        for (i = 0; i < n; ) {
+            size_t b, e, j, q;
+            if (!(is_id((unsigned char)s[i]) && (i == 0 || !is_id((unsigned char)s[i - 1])))) { i++; continue; }
+            b = i;
+            while (i < n && is_id((unsigned char)s[i])) i++;
+            if (i - b != 6 || memcmp(s + b, "buffer", 6) != 0) continue;
+            j = i;
+            while (j < n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r')) j++;
+            e = j;
+            while (e < n && is_id((unsigned char)s[e])) e++;
+            if (e == j) continue;                                  /* no hay nombre de bloque */
+            q = e;
+            while (q < n && (s[q] == ' ' || s[q] == '\t' || s[q] == '\n' || s[q] == '\r')) q++;
+            if (q >= n || s[q] != '{') continue;                   /* no es un bloque */
+            {   /* calificadores previos: layout(...) y readonly/writeonly/coherent/volatile/restrict */
+                size_t k = b;
+                long lay_open = -1, lay_close = -1;
+                for (;;) {
+                    size_t w;
+                    while (k > 0 && (s[k - 1] == ' ' || s[k - 1] == '\t' || s[k - 1] == '\n' || s[k - 1] == '\r')) k--;
+                    if (k > 0 && s[k - 1] == ')') {
+                        long depth = 0; size_t m = k;
+                        lay_close = (long)k - 1;
+                        while (m > 0) { m--; if (s[m] == ')') depth++; else if (s[m] == '(') { if (--depth == 0) break; } }
+                        lay_open = (long)m;
+                        k = m;
+                        while (k > 0 && (s[k - 1] == ' ' || s[k - 1] == '\t')) k--;
+                        if (k >= 6 && memcmp(s + k - 6, "layout", 6) == 0) { k -= 6; break; }
+                        lay_open = lay_close = -1;
+                        break;
+                    }
+                    w = k;
+                    while (w > 0 && is_id((unsigned char)s[w - 1])) w--;
+                    if (w == k) break;
+                    if ((k - w == 8 && !memcmp(s + w, "readonly", 8)) || (k - w == 9 && !memcmp(s + w, "writeonly", 9)) ||
+                        (k - w == 8 && !memcmp(s + w, "coherent", 8)) || (k - w == 8 && !memcmp(s + w, "volatile", 8)) ||
+                        (k - w == 8 && !memcmp(s + w, "restrict", 8))) { k = w; continue; }
+                    break;
+                }
+                if (lay_open >= 0) {
+                    char* bd = NULL; size_t z;
+                    for (z = (size_t)lay_open; z + 7 <= (size_t)lay_close; z++)
+                        if (!memcmp(s + z, "binding", 7) && (z == 0 || !is_id((unsigned char)s[z - 1]))) { bd = s + z; break; }
+                    if (bd) {
+                        if (pass == 0) { const char* eq = strchr(bd, '='); if (eq && eq < s + lay_close) used |= 1u << (atoi(eq + 1) & 31); }
+                        continue;
+                    }
+                }
+                if (pass == 0) continue;
+                {   /* sin binding: el primero libre */
+                    int free_b = 0; char ins[40]; char nm[64]; size_t nl = e - j;
+                    while (free_b < 31 && (used & (1u << free_b))) free_b++;
+                    used |= 1u << free_b;
+                    if (info && info->n_ssbo_unb < 8) {
+                        if (nl >= sizeof nm) nl = sizeof nm - 1;
+                        memcpy(nm, s + j, nl); nm[nl] = 0;
+                        strcpy(info->ssbo_unb[info->n_ssbo_unb++], nm);
+                    }
+                    if (lay_open >= 0) {
+                        snprintf(ins, sizeof ins, "binding=%d, ", free_b);
+                        if (!ssbo_insert(&s, (size_t)lay_open + 1, ins)) { free(s); return NULL; }
+                    } else {
+                        snprintf(ins, sizeof ins, "layout(binding=%d) ", free_b);
+                        if (!ssbo_insert(&s, b, ins)) { free(s); return NULL; }
+                    }
+                    n = strlen(s);
+                    i = e + strlen(ins);
+                }
+            }
+        }
+    }
+    return s;
+}
+
 char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
                            const gl31_fragbind_t* binds, int nbinds,
                            gl31_sampler_info_t* samplers, char* err, size_t errlen)
@@ -632,6 +874,10 @@ char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
     unsigned char used[F_COUNT][K_COUNT][3];
     const char* bad = NULL;
 
+    gl31_conv_opts_t opts = g_opts;                /* las opciones valen para una sola conversion */
+    sb_t lu_hdr = {0, 0, 0, 0}, lu_tail = {0, 0, 0, 0};
+    memset(&g_opts, 0, sizeof g_opts);
+    memset(&g_info, 0, sizeof g_info);
     memset(&names, 0, sizeof names);
     memset(used, 0, sizeof used);
     if (samplers) samplers->n = 0;
@@ -708,7 +954,8 @@ char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
             goto fail;
         }
     }
-    if (find_word(s, "gl_ClipDistance") && !gl31_caps.clip_distance) {
+    if (find_word(s, "gl_ClipDistance") && !gl31_caps.clip_distance &&
+        !(shader_type == GL_VERTEX_SHADER && opts.last_vs)) {
         set_err(err, errlen, "gl_ClipDistance requiere EXT_clip_cull_distance en el backend", "gl_ClipDistance");
         goto fail;
     }
@@ -747,7 +994,7 @@ char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
         sb_str(&ext, "#extension GL_EXT_texture_buffer : require\n");
     if (find_word(s, "sampler2DMSArray") || find_word(s, "isampler2DMSArray") || find_word(s, "usampler2DMSArray"))
         sb_str(&ext, "#extension GL_OES_texture_storage_multisample_2d_array : require\n");
-    if (find_word(s, "gl_ClipDistance"))
+    if (gl31_caps.clip_distance && find_word(s, "gl_ClipDistance"))
         sb_str(&ext, gl31_caps.clip_distance == 2 ? "#extension GL_ANGLE_clip_cull_distance : require\n"
                                                   : "#extension GL_EXT_clip_cull_distance : require\n");
     if (es < 320 && (gl31_caps.geometry || gl31_caps.tess) && gl31_caps.io_blocks_ext)
@@ -811,6 +1058,14 @@ char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
     if (g_saw_index && shader_type == GL_FRAGMENT_SHADER)
         sb_str(&ext, "#extension GL_EXT_blend_func_extended : require\n");
 
+    if (!lu_transform(&s, shader_type, &opts, &lu_hdr, &lu_tail)) goto oom;
+    if (lu_hdr.oom || lu_tail.oom) goto oom;
+
+    if (gl31_caps.es31 && find_word(s, "buffer")) {
+        s = assign_ssbo_bindings(s, &g_info);
+        if (!s) goto oom;
+    }
+
     /* --- salida: cabecera ES + #line 1 para conservar numeracion --- */
     snprintf(num, sizeof num, "#version %d es\n", es);
     sb_str(&o, num);
@@ -819,17 +1074,19 @@ char* gl31_glsl_convert_ex(const char* src, GLenum shader_type,
     if (uses_color) sb_str(&o, "layout(location = 0) out highp vec4 lorica_FragColor; ");
     if (uses_data)  sb_str(&o, "layout(location = 0) out highp vec4 lorica_FragData[4]; ");
     emit_helpers(&o, used);
+    if (lu_hdr.n) sb_cat(&o, lu_hdr.p, lu_hdr.n);
     sb_str(&o, "\n#line 1\n");
     sb_str(&o, s);
+    if (lu_tail.n) sb_cat(&o, lu_tail.p, lu_tail.n);
     if (o.oom) goto oom;
 
-    free(s); free(ext.p);
+    free(s); free(ext.p); free(lu_hdr.p); free(lu_tail.p);
     return o.p;
 
 oom:
     set_err(err, errlen, "sin memoria", NULL);
 fail:
-    free(s); free(ext.p); free(o.p);
+    free(s); free(ext.p); free(o.p); free(lu_hdr.p); free(lu_tail.p);
     return NULL;
 }
 

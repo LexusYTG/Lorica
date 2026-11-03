@@ -28,36 +28,63 @@ void gl31_stub_warn(const char* fn)
     fprintf(stderr, "LORICA GL31: %s no soportado sobre GLES (ignorado)\n", fn);
 }
 
-/* Emulado con MapBufferRange(READ) + memcpy. */
+/* ES no tiene glGetBufferSubData. Con almacenamiento inmutable (glBufferStorage) el buffer puede no
+ * tener MAP_READ o estar respaldado por memoria de Vulkan: se copia en GPU a un buffer temporal
+ * (ordenado con el trabajo pendiente) y se lee de ese. Si no, MapBufferRange(READ) directo. */
 void gl31_glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void* data)
 {
     GLint total = 0;
+    GLbitfield sf = 0; int vk = 0, imm;
     void* p;
     if (offset < 0 || size < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (size == 0) return;
     if (!data) { gl31_set_error(GL_INVALID_VALUE); return; }
-    BE(glGetBufferParameteriv)(target, GL_BUFFER_SIZE, &total);
+    imm = gl31_buffer_immutable_info(target, &sf, &vk);
+    gl31_glGetBufferParameteriv(target, GL_BUFFER_SIZE, &total);
     if (offset + size > (GLsizeiptr)total) { gl31_set_error(GL_INVALID_VALUE); return; }
-    p = BE(glMapBufferRange)(target, offset, size, GL_MAP_READ_BIT);
+    if (imm) {            /* inmutable: puede estar mapeado de forma persistente o no tener MAP_READ */
+        gl31_state_t* st = gl31_state();
+        GLenum rt = (target == GL_COPY_WRITE_BUFFER) ? GL_COPY_READ_BUFFER : GL_COPY_WRITE_BUFFER;
+        GLuint prev = (rt == GL_COPY_READ_BUFFER) ? st->copy_read_buffer : st->copy_write_buffer, tmp = 0;
+        BE(glGenBuffers)(1, &tmp);
+        BE(glBindBuffer)(rt, tmp);
+        BE(glBufferData)(rt, size, NULL, GL_STREAM_READ);
+        BE(glCopyBufferSubData)(target, rt, offset, 0, size);
+        p = BE(glMapBufferRange)(rt, 0, size, GL_MAP_READ_BIT);
+        if (p) { memcpy(data, p, (size_t)size); BE(glUnmapBuffer)(rt); }
+        else gl31_set_error(GL_OUT_OF_MEMORY);
+        BE(glBindBuffer)(rt, prev);
+        BE(glDeleteBuffers)(1, &tmp);
+        return;
+    }
+    p = gl31_glMapBufferRange(target, offset, size, GL_MAP_READ_BIT);
     if (!p) { gl31_set_error(GL_INVALID_OPERATION); return; }
     memcpy(data, p, (size_t)size);
-    BE(glUnmapBuffer)(target);
+    gl31_glUnmapBuffer(target);
 }
 
-/* Solo GL_FILL esta disponible en GLES. */
+/* GL_LINE / GL_POINT: ES solo rasteriza triangulos rellenos. Los triangulos se reconvierten en la GPU a
+ * lineas o puntos (gl31_idxgen.c) al dibujar. Con cull face activo se dibujan los bordes de todos los
+ * triangulos (GL descartaria antes los de la cara culleada). */
 void gl31_glPolygonMode(GLenum face, GLenum mode)
 {
     if (face != GL_FRONT_AND_BACK) { gl31_set_error(GL_INVALID_ENUM); return; }
-    switch (mode) {
-        case GL_FILL: return;
-        case GL_LINE:
-        case GL_POINT: gl31_stub_warn("glPolygonMode(LINE/POINT)"); return;
-        default: gl31_set_error(GL_INVALID_ENUM);
-    }
+    if (mode != GL_FILL && mode != GL_LINE && mode != GL_POINT) { gl31_set_error(GL_INVALID_ENUM); return; }
+    gl31_state()->polygon_mode = mode;
 }
 
+/* GL_CLAMP_READ_COLOR se aplica de verdad en glReadPixels (gl31_fbo.c). En ES el color del fragmento
+ * solo se recorta en buffers de punto fijo (como FIXED_ONLY) y los atributos de vertice nunca se
+ * recortan: CLAMP_VERTEX/FRAGMENT_COLOR se registran para poder consultarlos, y se aceptan los tres
+ * valores validos porque el comportamiento de ES coincide con el modo por defecto de GL. */
 void gl31_glClampColor(GLenum target, GLenum clamp)
 {
-    (void)target; (void)clamp;
-    gl31_stub_warn("glClampColor");
+    gl31_state_t* s = gl31_state();
+    if (clamp != GL_TRUE && clamp != GL_FALSE && clamp != GL_FIXED_ONLY) { gl31_set_error(GL_INVALID_ENUM); return; }
+    switch (target) {
+        case GL_CLAMP_READ_COLOR:     s->clamp_read_color = clamp; break;
+        case GL_CLAMP_VERTEX_COLOR:   s->clamp_vertex_color = clamp; break;
+        case GL_CLAMP_FRAGMENT_COLOR: s->clamp_fragment_color = clamp; break;
+        default: gl31_set_error(GL_INVALID_ENUM); return;
+    }
 }

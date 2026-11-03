@@ -1,5 +1,6 @@
 /* gl31_uniform.c - uniform blocks (UBO) y consulta de bindings indexados */
 #include "gl31.h"
+#include <stdlib.h>
 
 GLuint gl31_glGetUniformBlockIndex(GLuint program, const GLchar* name)
 {
@@ -35,6 +36,8 @@ void gl31_glGetUniformIndices(GLuint program, GLsizei count, const GLchar* const
     if (count == 0) return;
     if (!names || !indices) { gl31_set_error(GL_INVALID_VALUE); return; }
     BE(glGetUniformIndices)(program, count, names, indices);
+    if (gl31_lu_hidden_count(program))        /* indices del backend -> de la app (sin lorica_*) */
+        for (GLsizei i = 0; i < count; i++) indices[i] = gl31_lu_backend_to_app(program, indices[i]);
 }
 
 void gl31_glGetActiveUniformsiv(GLuint program, GLsizei count, const GLuint* indices, GLenum pname, GLint* params)
@@ -42,6 +45,14 @@ void gl31_glGetActiveUniformsiv(GLuint program, GLsizei count, const GLuint* ind
     if (count < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (count == 0) return;
     if (!indices || !params) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (gl31_lu_hidden_count(program)) {      /* indices de la app -> del backend */
+        GLuint stackbuf[64]; GLuint* m = stackbuf; GLsizei i;
+        if (count > 64 && !(m = (GLuint*)malloc((size_t)count * sizeof *m))) { gl31_set_error(GL_OUT_OF_MEMORY); return; }
+        for (i = 0; i < count; i++) m[i] = gl31_lu_app_to_backend(program, indices[i]);
+        BE(glGetActiveUniformsiv)(program, count, m, pname, params);
+        if (m != stackbuf) free(m);
+        return;
+    }
     BE(glGetActiveUniformsiv)(program, count, indices, pname, params);
 }
 
@@ -153,6 +164,7 @@ static int prog_for_active(GLuint program, GLenum count_pname, GLuint index, GLs
     if (st == -2) { gl31_set_error(GL_INVALID_OPERATION); return 0; }
     if (st < 0 || bufSize < 0) { gl31_set_error(GL_INVALID_VALUE); return 0; }
     if (st == 1) BE(glGetProgramiv)(program, count_pname, &n);
+    if (st == 1 && count_pname == GL_ACTIVE_UNIFORMS) n -= gl31_lu_hidden_count(program);   /* sin lorica_* */
     if (index >= (GLuint)n) { gl31_set_error(GL_INVALID_VALUE); return 0; }
     return 1;
 }
@@ -177,6 +189,7 @@ void gl31_glGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsi
     char tmp[256];
     if (!prog_for_active(program, GL_ACTIVE_UNIFORMS, index, bufSize)) return;
     if (!name) bufSize = 0;
+    index = gl31_lu_app_to_backend(program, index);
     BE(glGetActiveUniform)(program, index, bufSize, &len, &sz, &ty, name);
     if (type) {
         /* sampler1D / 1DArray / 2DRect: el backend ve 2D / 2DArray; se informa el tipo de la app */
@@ -201,6 +214,7 @@ void gl31_glGetActiveUniformName(GLuint program, GLuint uniformIndex, GLsizei bu
     GLsizei len = 0; GLint sz = 0; GLenum ty = 0;
     if (!prog_for_active(program, GL_ACTIVE_UNIFORMS, uniformIndex, bufSize)) return;
     if (!name) bufSize = 0;
+    uniformIndex = gl31_lu_app_to_backend(program, uniformIndex);
     BE(glGetActiveUniform)(program, uniformIndex, bufSize, &len, &sz, &ty, name);
     if (length) *length = len;
 }

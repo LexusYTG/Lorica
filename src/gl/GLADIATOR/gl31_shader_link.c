@@ -16,6 +16,11 @@ typedef struct {
     int deleted;
     int has_binds;                 /* el fuente del backend lleva layout(location) de BindFragDataLocation */
     gl31_sampler_info_t* smp;      /* samplers 1D/Rect reescritos (NULL si no hay) */
+    int last_vs;                   /* VS: compilado como ultima etapa de vertices (wrapper de main) */
+    int cd_n;                      /* VS: clip distances emuladas */
+    int fs_cd;                     /* FS: clip distances emuladas que espera del VS */
+    int fs_cd_want;                /* FS: las que pide el programa que se esta enlazando */
+    int n_ssbo_unb; char ssbo_unb[8][64];   /* bloques SSBO a los que el conversor asigno binding */
 } shader_t;
 
 typedef struct {
@@ -27,7 +32,18 @@ typedef struct {
     struct { char name[64]; GLuint loc; GLuint idx; } fb[16];   /* glBindFragDataLocation */
     int nfb;
     gl31_sampler_info_t smp;       /* tipos de desktop de los samplers del programa */
+    /* uniforms propios (gl31.h): ubicaciones, version sincronizada e indices ocultos a la app */
+    GLint loc_vs, loc_vs2, loc_fs;
+    unsigned lu_ver;
+    int has_lu;
+    GLuint lu_idx[3]; int n_lu_idx;   /* indices de uniform (backend) de lorica_*, ascendentes */
+    int nsb; struct { GLuint L, P; } sb[16];   /* bloques SSBO: binding del backend (L) y el que fijo la app (P) */
+    int sb_remap;                      /* algun bloque tiene P != L */
 } prog_t;
+
+static unsigned g_lu_ver = 1;
+static int g_any_ssbo_remap;          /* algun programa necesita resolver bloques SSBO antes de dibujar */
+void gl31_lu_bump(void) { g_lu_ver++; }
 
 static shader_t* g_sh; static size_t g_nsh, g_csh;
 static prog_t*   g_pr; static size_t g_npr, g_cpr;
@@ -169,13 +185,22 @@ void gl31_link_shutdown(void)
 GLuint gl31_glCreateShader(GLenum type)
 {
     GLuint id;
-    /* geometry shaders: GL 3.2, solo si el backend los tiene (ES 3.2 o EXT_geometry_shader) */
+    /* etapas de GL 3.2 / 4.x: solo si el backend las tiene (ES 3.2, EXT_geometry_shader, EXT_tessellation_shader, ES 3.1) */
     if (type == GL_GEOMETRY_SHADER && !gl31_caps.geometry) {
         gl31_stub_warn("GL_GEOMETRY_SHADER (backend sin geometry shaders)");
         gl31_set_error(GL_INVALID_ENUM);
         return 0;
     }
-    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER && type != GL_GEOMETRY_SHADER) {
+    if ((type == GL_TESS_CONTROL_SHADER || type == GL_TESS_EVALUATION_SHADER) && !gl31_caps.tess) {
+        gl31_set_error(GL_INVALID_ENUM);
+        return 0;
+    }
+    if (type == GL_COMPUTE_SHADER && !gl31_caps.es31) {
+        gl31_set_error(GL_INVALID_ENUM);
+        return 0;
+    }
+    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER && type != GL_GEOMETRY_SHADER &&
+        type != GL_TESS_CONTROL_SHADER && type != GL_TESS_EVALUATION_SHADER && type != GL_COMPUTE_SHADER) {
         gl31_set_error(GL_INVALID_ENUM);
         return 0;
     }
@@ -226,9 +251,17 @@ void gl31_glCompileShader(GLuint shader)
     }
     {
         gl31_sampler_info_t info;
+        gl31_conv_opts_t co; gl31_conv_info_t ci;
         memset(&info, 0, sizeof info);
+        memset(&co, 0, sizeof co);
+        co.last_vs = (sh->type == GL_VERTEX_SHADER);      /* se supone ultima etapa; LinkProgram corrige */
+        gl31_glsl_set_opts(&co);
         conv = gl31_glsl_convert_ex(sh->source, sh->type, NULL, 0, &info, err, sizeof err);
+        gl31_glsl_get_info(&ci);
         if (!conv) { set_str(&sh->log, err); return; }
+        sh->last_vs = co.last_vs; sh->cd_n = ci.cd_n; sh->fs_cd = 0;
+        sh->n_ssbo_unb = ci.n_ssbo_unb;
+        memcpy(sh->ssbo_unb, ci.ssbo_unb, sizeof sh->ssbo_unb);
         free(sh->smp);
         sh->smp = NULL;
         sh->has_binds = 0;
@@ -335,19 +368,55 @@ void gl31_glLinkProgram(GLuint program)
             return;
         }
     }
+    /* Etapas de vertices: con geometry/tessellation el wrapper de uniforms propios no se aplica
+     * (cada EmitVertex escribe gl_Position); sin ellas, el VS es la ultima etapa. */
+    {
+        int staged = 0, want_cd = 0;
+        for (k = 0; k < p->natt; k++) {
+            shader_t* sh = sh_find(p->att[k]);
+            if (sh && (sh->type == GL_GEOMETRY_SHADER || sh->type == GL_TESS_CONTROL_SHADER ||
+                       sh->type == GL_TESS_EVALUATION_SHADER)) staged = 1;
+        }
+        for (k = 0; k < p->natt; k++) {
+            shader_t* sh = sh_find(p->att[k]);
+            gl31_sampler_info_t info; gl31_conv_opts_t co; gl31_conv_info_t ci;
+            char err[512]; char* conv;
+            if (!sh || sh->type != GL_VERTEX_SHADER || !sh->source) continue;
+            if (sh->last_vs == !staged) { if (sh->last_vs) want_cd = sh->cd_n; continue; }
+            memset(&info, 0, sizeof info); memset(&co, 0, sizeof co);
+            co.last_vs = !staged;
+            gl31_glsl_set_opts(&co);
+            conv = gl31_glsl_convert_ex(sh->source, sh->type, NULL, 0, &info, err, sizeof err);
+            gl31_glsl_get_info(&ci);
+            if (!conv) { set_str(&p->log, err); return; }
+            BE(glShaderSource)(sh->id, 1, (const GLchar* const*)&conv, NULL);
+            BE(glCompileShader)(sh->id);
+            BE(glGetShaderiv)(sh->id, GL_COMPILE_STATUS, &ok);
+            free(conv);
+            if (!ok) { free(p->log); p->log = backend_log(1, sh->id); sh->compiled = 0; return; }
+            sh->last_vs = co.last_vs; sh->cd_n = ci.cd_n;
+            if (sh->last_vs) want_cd = sh->cd_n;
+        }
+        for (k = 0; k < p->natt; k++) { shader_t* sh = sh_find(p->att[k]); if (sh && sh->type == GL_FRAGMENT_SHADER) sh->fs_cd_want = want_cd; }
+    }
     /* glBindFragDataLocation: GLES solo admite layout(location) en el shader, asi que los
-     * fragment shaders se reconvierten con las ubicaciones pedidas antes de linkear */
+     * fragment shaders se reconvierten con las ubicaciones pedidas antes de linkear. Tambien
+     * se reconvierten si el numero de clip distances emuladas que llegan del VS cambio. */
     for (k = 0; k < p->natt; k++) {
         shader_t* sh = sh_find(p->att[k]);
         gl31_fragbind_t fb[16];
+        gl31_conv_opts_t co;
         char err[512];
         char* conv;
         int n;
         if (!sh || sh->type != GL_FRAGMENT_SHADER || !sh->source) continue;
-        if (!p->nfb && !sh->has_binds) continue;
+        if (!p->nfb && !sh->has_binds && sh->fs_cd == sh->fs_cd_want) continue;
         for (n = 0; n < p->nfb; n++) { fb[n].name = p->fb[n].name; fb[n].location = p->fb[n].loc; fb[n].index = p->fb[n].idx; }
+        memset(&co, 0, sizeof co); co.fs_cd = sh->fs_cd_want;
+        gl31_glsl_set_opts(&co);
         conv = gl31_glsl_convert_ex(sh->source, sh->type, fb, p->nfb, NULL, err, sizeof err);
         if (!conv) { set_str(&p->log, err); return; }
+        sh->fs_cd = sh->fs_cd_want;
         BE(glShaderSource)(sh->id, 1, (const GLchar* const*)&conv, NULL);
         BE(glCompileShader)(sh->id);
         BE(glGetShaderiv)(sh->id, GL_COMPILE_STATUS, &ok);
@@ -373,6 +442,121 @@ void gl31_glLinkProgram(GLuint program)
     p->linked = ok;
     free(p->log);
     p->log = backend_log(0, program);
+    p->loc_vs = p->loc_vs2 = p->loc_fs = -1; p->has_lu = 0; p->n_lu_idx = 0; p->lu_ver = 0;
+    p->nsb = 0; p->sb_remap = 0;
+    if (ok && gl31_caps.es31) {        /* bloques SSBO: binding inicial (layout o 0 de GL) de cada uno */
+        GLint nres = 0, i;
+        BE(glGetProgramInterfaceiv)(program, GL_SHADER_STORAGE_BLOCK, GL_ACTIVE_RESOURCES, &nres);
+        for (i = 0; i < nres && i < 16; i++) {
+            GLenum prop = GL_BUFFER_BINDING; GLint v = 0; GLsizei len = 0;
+            char nm[96]; GLsizei nl = 0; int a, b, unb = 0;
+            BE(glGetProgramResourceiv)(program, GL_SHADER_STORAGE_BLOCK, (GLuint)i, 1, &prop, 1, &len, &v);
+            BE(glGetProgramResourceName)(program, GL_SHADER_STORAGE_BLOCK, (GLuint)i, (GLsizei)sizeof nm, &nl, nm);
+            for (a = 0; a < p->natt && !unb; a++) {
+                shader_t* sh = sh_find(p->att[a]);
+                for (b = 0; sh && b < sh->n_ssbo_unb; b++) if (!strcmp(sh->ssbo_unb[b], nm)) { unb = 1; break; }
+            }
+            p->sb[i].L = (GLuint)v;
+            p->sb[i].P = unb ? 0u : (GLuint)v;       /* sin layout(binding), GL parte de 0 */
+            if (p->sb[i].P != p->sb[i].L) p->sb_remap = 1;
+            p->nsb = i + 1;
+        }
+        if (p->sb_remap) g_any_ssbo_remap = 1;
+    }
+    if (ok) {
+        static const char* const names[3] = { "lorica_vs", "lorica_vs2", "lorica_fs" };
+        GLuint idx[3]; int i, j;
+        p->loc_vs  = BE(glGetUniformLocation)(program, names[0]);
+        p->loc_vs2 = BE(glGetUniformLocation)(program, names[1]);
+        p->loc_fs  = BE(glGetUniformLocation)(program, names[2]);
+        p->has_lu = (p->loc_vs >= 0 || p->loc_vs2 >= 0 || p->loc_fs >= 0);
+        if (BE(glGetUniformIndices)) {
+            const GLchar* nm[3] = { names[0], names[1], names[2] };
+            BE(glGetUniformIndices)(program, 3, nm, idx);
+            for (i = 0; i < 3; i++) if (idx[i] != GL_INVALID_INDEX) p->lu_idx[p->n_lu_idx++] = idx[i];
+            for (i = 1; i < p->n_lu_idx; i++) {           /* orden ascendente */
+                GLuint v = p->lu_idx[i];
+                for (j = i - 1; j >= 0 && p->lu_idx[j] > v; j--) p->lu_idx[j + 1] = p->lu_idx[j];
+                p->lu_idx[j + 1] = v;
+            }
+        }
+    }
+}
+
+/* ---- sincronizacion de los uniforms propios antes de dibujar ---- */
+static prog_t* pr_cached(GLuint id)
+{
+    static size_t hint;
+    if (hint < g_npr && g_pr[hint].id == id) return &g_pr[hint];
+    for (hint = 0; hint < g_npr; hint++) if (g_pr[hint].id == id) return &g_pr[hint];
+    hint = 0;
+    return NULL;
+}
+
+void gl31_lu_sync(void)
+{
+    gl31_state_t* s = gl31_state();
+    prog_t* p;
+    GLboolean b; int i, mask = 0;
+    if (!s->program) return;
+    p = pr_cached(s->program);
+    if (!p || !p->has_lu || p->lu_ver == g_lu_ver) return;
+    if (p->loc_vs >= 0) {
+        GLboolean pps = GL_FALSE;
+        gl31_soft_cap_get(GL_PROGRAM_POINT_SIZE, &pps);
+        BE(glUniform4f)(p->loc_vs, s->point_size, pps ? 0.0f : 1.0f,
+                        s->clip_depth == GL_ZERO_TO_ONE ? 1.0f : 0.0f,
+                        s->clip_origin == GL_UPPER_LEFT ? 1.0f : 0.0f);
+    }
+    for (i = 0; i < 8; i++) if (gl31_soft_cap_get(GL_CLIP_DISTANCE0 + i, &b) && b) mask |= 1 << i;
+    if (p->loc_vs2 >= 0) BE(glUniform4f)(p->loc_vs2, s->depth_clamp_soft ? 1.0f : 0.0f, (GLfloat)mask, 0.0f, 0.0f);
+    if (p->loc_fs >= 0) {
+        BE(glUniform4f)(p->loc_fs, s->point_sprite_origin == GL_LOWER_LEFT ? 1.0f : 0.0f, (GLfloat)mask, 0.0f, 0.0f);
+    }
+    p->lu_ver = g_lu_ver;
+}
+
+int gl31_program_staged(GLuint program)
+{
+    prog_t* p = pr_find(program);
+    size_t k;
+    if (!p) return 0;
+    for (k = 0; k < p->natt; k++) {
+        shader_t* sh = sh_find(p->att[k]);
+        if (sh && (sh->type == GL_GEOMETRY_SHADER || sh->type == GL_TESS_CONTROL_SHADER ||
+                   sh->type == GL_TESS_EVALUATION_SHADER)) return 1;
+    }
+    return 0;
+}
+
+/* ---- ocultar lorica_* a la app: remapeo de indices de uniform ---- */
+int gl31_lu_hidden_count(GLuint program)
+{
+    prog_t* p = pr_find(program);
+    return p ? p->n_lu_idx : 0;
+}
+
+/* indice de la app -> indice del backend */
+GLuint gl31_lu_app_to_backend(GLuint program, GLuint idx)
+{
+    prog_t* p = pr_find(program);
+    int i;
+    if (!p) return idx;
+    for (i = 0; i < p->n_lu_idx; i++) if (p->lu_idx[i] <= idx) idx++;
+    return idx;
+}
+
+/* indice del backend -> indice de la app (GL_INVALID_INDEX si es uno oculto) */
+GLuint gl31_lu_backend_to_app(GLuint program, GLuint idx)
+{
+    prog_t* p = pr_find(program);
+    GLuint below = 0; int i;
+    if (!p || idx == GL_INVALID_INDEX) return idx;
+    for (i = 0; i < p->n_lu_idx; i++) {
+        if (p->lu_idx[i] == idx) return GL_INVALID_INDEX;
+        if (p->lu_idx[i] < idx) below++;
+    }
+    return idx - below;
 }
 
 void gl31_glGetProgramiv(GLuint program, GLenum pname, GLint* params)
@@ -388,6 +572,7 @@ void gl31_glGetProgramiv(GLuint program, GLenum pname, GLint* params)
         default:
             if (!p->linked && pname != GL_VALIDATE_STATUS) { *params = 0; break; }
             BE(glGetProgramiv)(program, pname, params);
+            if (pname == GL_ACTIVE_UNIFORMS) *params -= p->n_lu_idx;        /* sin lorica_* */
     }
 }
 
@@ -663,4 +848,72 @@ void gl31_glProgramBinary(GLuint program, GLenum format, const void* binary, GLs
     p->log = backend_log(0, program);
     /* un binario no trae los tipos de sampler de desktop ni los frag-data de la app */
     p->smp.n = 0;
+}
+
+
+/* ---------- glShaderStorageBlockBinding ---------- */
+void gl31_glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding)
+{
+    prog_t* p = pr_find(program);
+    GLint maxb = 4;
+    if (!p) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!gl31_caps.es31) { gl31_set_error(GL_INVALID_OPERATION); return; }
+    if (!p->linked || (int)index >= p->nsb) { gl31_set_error(GL_INVALID_VALUE); return; }
+    BE(glGetIntegerv)(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, &maxb);
+    if ((GLint)binding >= maxb || binding >= 16) { gl31_set_error(GL_INVALID_VALUE); return; }
+    p->sb[index].P = binding;
+    {   int k; p->sb_remap = 0; for (k = 0; k < p->nsb; k++) if (p->sb[k].P != p->sb[k].L) p->sb_remap = 1; }
+    if (p->sb_remap) g_any_ssbo_remap = 1;
+}
+
+/* binding que ve la app para un bloque (en vez del unico que se le dio en el backend) */
+GLint gl31_program_ssbo_binding(GLuint program, GLuint block_index, GLint backend_binding)
+{
+    prog_t* p = pr_find(program);
+    if (!p || (int)block_index >= p->nsb) return backend_binding;
+    return (GLint)p->sb[block_index].P;
+}
+
+void gl31_ssbo_record(GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size)
+{
+    gl31_state_t* s = gl31_state();
+    if (index >= 16) return;
+    s->ssbo[index].buffer = buffer; s->ssbo[index].offset = offset; s->ssbo[index].size = size;
+}
+
+int gl31_ssbo_get(GLuint index, GLuint* buffer, GLint64* offset, GLint64* size)
+{
+    gl31_state_t* s = gl31_state();
+    if (index >= 16) return 0;
+    *buffer = s->ssbo[index].buffer; *offset = s->ssbo[index].offset; *size = s->ssbo[index].size;
+    return 1;
+}
+
+static void ssbo_bind_be(GLuint be_index, GLuint app_index)
+{
+    gl31_state_t* s = gl31_state();
+    if (s->ssbo[app_index].size > 0) BE(glBindBufferRange)(GL_SHADER_STORAGE_BUFFER, be_index, s->ssbo[app_index].buffer, s->ssbo[app_index].offset, s->ssbo[app_index].size);
+    else BE(glBindBufferBase)(GL_SHADER_STORAGE_BUFFER, be_index, s->ssbo[app_index].buffer);
+}
+
+/* antes de un draw/dispatch: cada bloque del programa activo lee el buffer que la app enlazo en su binding P */
+void gl31_ssbo_sync(void)
+{
+    gl31_state_t* s = gl31_state();
+    prog_t* p;
+    int k;
+    unsigned clob = 0;
+    GLint generic = 0;
+    int touched = 0;
+    if (!g_any_ssbo_remap && !s->ssbo_clob) return;
+    p = s->program ? pr_find(s->program) : NULL;
+    if (!s->ssbo_clob && (!p || !p->sb_remap)) return;
+    BE(glGetIntegerv)(GL_SHADER_STORAGE_BUFFER_BINDING, &generic);   /* glBindBufferBase tambien enlaza el punto generico */
+    for (k = 0; k < 16; k++) if (s->ssbo_clob & (1u << k)) { ssbo_bind_be((GLuint)k, (GLuint)k); touched = 1; }   /* deshacer la anterior */
+    s->ssbo_clob = 0;
+    if (p && p->sb_remap)
+        for (k = 0; k < p->nsb; k++)
+            if (p->sb[k].P != p->sb[k].L) { ssbo_bind_be(p->sb[k].L, p->sb[k].P); clob |= 1u << p->sb[k].L; touched = 1; }
+    s->ssbo_clob = clob;
+    if (touched) BE(glBindBuffer)(GL_SHADER_STORAGE_BUFFER, (GLuint)generic);
 }

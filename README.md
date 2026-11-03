@@ -38,8 +38,23 @@ Gladiator stack well, and be easy to reshape.
   up to 4.3.
 - **Modern GL layer.** Compute, SSBO, tessellation, transform feedback
   objects, program pipelines, texture views, `glCopyImageSubData`,
-  multi-bind, indirect draws, base instance, DSA -- all forwarded to
-  ES 3.1 / 3.2, with fallbacks where ES cannot express them.
+  multi-bind, indirect draws, base instance, DSA, `glClipControl`,
+  `glShaderStorageBlockBinding`, arbitrary draw buffer mapping -- all
+  forwarded to ES 3.1 / 3.2, with fallbacks where ES cannot express
+  them.
+- **GPU instead of CPU.** With ES 3.1, `glReadPixels` (color, depth,
+  stencil, any format/type, PBOs), `glGetTexImage`, `GL_BGRA` uploads,
+  compressed-texture readback, primitive restart, polygon mode and
+  provoking vertex run as compute kernels on the GPU. The CPU is the
+  last resort.
+- **Vulkan assist (optional).** Where GLES has no answer, a small Vulkan
+  1.1 layer helps: GPU timestamps for `GL_TIME_ELAPSED` /
+  `glQueryCounter`, and shared memory for persistent `glBufferStorage`.
+  It is loaded with `dlopen` and switched off with `LORICA_VK=0`.
+- **Fallbacks for weaker backends.** Features a driver lacks (copy
+  image, indexed blend, sample shading, vertex binding, draw buffer
+  remapping...) are emulated, and `LORICA_DISABLE_CAPS` lets you switch
+  backend capabilities off to exercise those paths.
 - **GLX.** `glXCreateContext`, `glXCreateContextAttribsARB`,
   `glXMakeCurrent`, `glXSwapBuffers`, `glXGetProcAddress`,
   `glXChooseFBConfig`, `glXGetVisualFromFBConfig`. Enough for SDL 2,
@@ -55,17 +70,20 @@ Gladiator stack well, and be easy to reshape.
                        shader link, GLSL conversion, capability probing
       glx/             GLX front-end, dispatch table, X11 plumbing
       egl/             EGL wrapper (EGL on top of GLX), see "EGL and GLX"
+      vk/              optional Vulkan 1.1 assist layer (lvk)
     include/           public headers
-    TEST/              LoriTest.c, the single test program
+    TEST/              LoriTest.c, the end-to-end test program
+    tests/hybrid/      GPU-path and Vulkan tests (Mesa, no GPU needed)
+    tools/             build_linux.sh (plain gcc build, no CMake)
     scripts/           termux-install.sh (build, verify, install, test)
     spec/              scripts that generate the extension tables
-    documentación/     full documentation (implemented, not implemented,
-                       limitations, known bugs, EGL/GLX)
+    documentación/     the documentation (one file, in Spanish)
 
 The `GLADIATOR/` directory is the entry point for anything the core
 does not cover. Files named `gl31_*` there implement the 3.x/4.x
 surface. What is implemented, what is not, and the known limits are
-documented in [`documentación/`](documentación/00-indice.md).
+documented in
+[`documentación/DOCUMENTACION.md`](documentación/DOCUMENTACION.md).
 
 ## Supported versions
 
@@ -97,7 +115,12 @@ End-to-end on a Mali-G52 MC2 through the Gladiator stack (bionic
 - Real applications: Red Eclipse 1.6, Luanti 5.10, SuperTuxKart, running
   through Scutum with Lorica loaded where the app requests modern GL.
 
-The test program is `TEST/LoriTest.c`. On Termux the installer builds
+The `tests/hybrid` suite (GPU paths, Vulkan assist, fallbacks) runs on
+Mesa with no GPU needed:
+
+    bash tests/hybrid/run.sh
+
+The end-to-end test program is `TEST/LoriTest.c`. On Termux the installer builds
 and runs it for you:
 
     bash scripts/termux-install.sh
@@ -114,19 +137,22 @@ A passing run prints `RESULTADO: TODO OK`.
 GLES cannot express a few desktop-GL features. Those are the honest
 limits:
 
-- **No `glClipControl`.** ES has no equivalent.
 - **No bindless, no sparse residency.**
 - **No `glTextureBarrier`** on the current path.
 - **64-bit double precision is downgraded to float.**
 - **Cube map compressed subimage and getters** return
   `GL_INVALID_OPERATION` in some DSA paths.
+- **`glGetTexImage` on ASTC and BPTC (BC6H/BC7)** textures warns and
+  fails; S3TC, RGTC, EAC and ETC2 are decoded on the GPU.
+- **`glLogicOp`** has no effect.
+- **`glClipControl`** does not remap viewport, scissor or `gl_FragCoord`.
 - **Viewport / scissor / depth range arrays** only index 0
   (`GL_MAX_VIEWPORTS = 1`).
 - **Transform feedback object getters**, `glGetnUniform*`, and
   `glGetVertexArrayIndexed64iv` are not implemented.
 
-`documentación/03-no-implementado-y-limitaciones.md` lists each of these
-against the affected function.
+Section 5 of [`documentación/DOCUMENTACION.md`](documentación/DOCUMENTACION.md)
+lists each of these against the affected function.
 
 ## Building
 
@@ -136,7 +162,11 @@ against the affected function.
 
 The resulting shared library lands in `lib/libGL.so.1`. `NOX11=OFF`
 enables the GLX front-end; `NOEGL=OFF` enables EGL; `GBM=OFF` skips
-DRM.
+DRM. Add `-DEGL_WRAPPER=ON` to also build `lib/libEGL.so.1` (see below).
+
+Without CMake, on Linux with X11:
+
+    tools/build_linux.sh [output_dir]
 
 ## EGL and GLX
 
@@ -155,7 +185,51 @@ Lorica touches EGL and GLX in two opposite directions:
   an `EGLConfig` is a `GLXFBConfig`, an `EGLContext` is a `GLXContext`.
 
 Both paths are described in detail in
-[`documentación/05-egl-glx.md`](documentación/05-egl-glx.md).
+section 7 of
+[`documentación/DOCUMENTACION.md`](documentación/DOCUMENTACION.md).
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `LIBGL_GL=NN` | Version ceiling (`33`, `43`...). Legacy contexts stay at 2.1 |
+| `LORICA_GL_MAX_VERSION=M.m` | Same, `4.3` style; wins over `LIBGL_GL` |
+| `LIBGL_FB=N` | Surface mode: 0 window, 1 framebuffer, 2 FBO (disables the modern layer), 3 pbuffer, 4 GBM |
+| `LIBGL_EGL`, `LIBGL_GLES` | Paths to the real EGL and GLES libraries |
+| `LIBGL_DEBUG`, `LORICA_DEBUG` | Print the detected backend capabilities |
+| `LORICA_TRACE_ERR=1` | Dump the stack where a GL error is raised |
+| `LORICA_DISABLE_CAPS=list` | Switch backend capabilities off to test fallbacks |
+| `LORICA_VK=0` | Disable the Vulkan assist layer |
+| `LORICA_VK_LIB`, `LORICA_VK_DEBUG`, `LORICA_VK_TIMER` | Vulkan library path, tracing, force Vulkan timers |
+| `LORICA_BUFSTORE=native\|vk` | Force the `glBufferStorage` path |
+| `LORICA_COMPRESSED_SHADOW_MB` | Memory budget for compressed-texture readback copies (default 256) |
+| `LIBGL_BANNER=0` | Hide the startup banner |
+
+The full list, with the platform-specific variables, is in section 2 of
+[`documentación/DOCUMENTACION.md`](documentación/DOCUMENTACION.md).
+
+## What's new in 1.4.5
+
+- `glClipControl` is now published (`ZERO_TO_ONE` exact, `UPPER_LEFT`
+  flips Y and face winding). The GLADIATOR dispatch table now has 572
+  functions; the legacy core publishes 640 names of its own (see the docs).
+- Arbitrary draw buffer mapping (`glDrawBuffer(GL_COLOR_ATTACHMENTi)`,
+  `glDrawBuffers`) through a proxy framebuffer.
+- `glShaderStorageBlockBinding` and `glGetCompressedTexImage` are
+  implemented (both used to return errors).
+- GPU pixel-transfer engine: `glReadPixels` (color, depth, stencil, any
+  format/type), `glGetTexImage` (including depth and compressed S3TC /
+  RGTC / EAC / ETC2), `GL_BGRA` uploads, `GL_PACK_IMAGE_HEIGHT` /
+  `GL_PACK_SKIP_IMAGES`.
+- Primitive restart with any index, `glPolygonMode`, provoking vertex,
+  `glPointSize`, depth clamp and clip distances, with GPU or shader
+  fallbacks where the extension is missing.
+- Vulkan assist layer: timer queries without `EXT_disjoint_timer_query`,
+  persistent `glBufferStorage` without `EXT_buffer_storage`.
+- Fallbacks for weaker backends and `LORICA_DISABLE_CAPS` to test them.
+- New `tests/hybrid` suite and `tools/build_linux.sh`.
+- Documentation consolidated into a single file; the old numbered notes
+  were removed.
 
 ## Project goals
 

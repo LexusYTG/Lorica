@@ -90,6 +90,9 @@ SET(GL_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_compute.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_gl4.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_dsa.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_vk.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_idxgen.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/vk/lvk.c
 )
 
 # GLADIATOR necesita los headers Khronos (GLES3/gl32.h...) de third_party; solo para sus fuentes
@@ -160,6 +163,10 @@ SET(GL_H
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/gl4es.h
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/gles.h
     ${CMAKE_CURRENT_SOURCE_DIR}/gl/wrap/stub.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_vk.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gl/GLADIATOR/gl31_idx.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/vk/lvk.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/vk/lvk_types.h
 )
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux|Android" AND NOT NO_LOADER)
@@ -238,10 +245,10 @@ else()
             if(AMIGAOS4)
                 target_link_libraries(GL m)
             else()
-                target_link_libraries(GL m dl)
+                target_link_libraries(GL m dl pthread)
             endif()
         else()
-            target_link_libraries(GL X11 m dl)
+            target_link_libraries(GL X11 m dl pthread)
             if(ANDROID)
                 target_link_libraries(GL X11-xcb xcb xcb-dri3 xcb-present)
             endif()

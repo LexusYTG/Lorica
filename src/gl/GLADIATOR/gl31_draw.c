@@ -1,6 +1,7 @@
 /* gl31_draw.c - draw calls del perfil core (sin FPE, sin punteros cliente),
  * variantes con base vertex (GL 3.2) y provoking vertex. */
 #include "gl31.h"
+#include "gl31_idx.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -32,6 +33,8 @@ static int pre_draw(GLenum mode, GLsizei count)
     if (!s->vao || (!s->program && !s->pipeline)) { gl31_set_error(GL_INVALID_OPERATION); return 0; }
     if (gl31_cond_skip()) return 0;       /* dentro de glBeginConditionalRender y query en 0 */
     gl31_tex_sync_for_draw();             /* elige 1D/2D/RECT segun el sampler del programa */
+    gl31_lu_sync();                       /* tamano de punto, clip control, clip distances... */
+    gl31_ssbo_sync();                     /* glShaderStorageBlockBinding */
     return 1;
 }
 
@@ -52,19 +55,12 @@ static int pre_draw_elements(GLenum mode, GLsizei count, GLenum type)
     return 1;
 }
 
-/* GLES solo tiene "restart" con indice fijo (0xFF / 0xFFFF / 0xFFFFFFFF segun el tipo).
- * Si el indice de la app coincide se activa; si es otro, no se puede emular
- * sin reescribir el buffer de indices: se avisa y se dibuja sin restart. */
-static void apply_restart(GLenum type)
+/* GLES solo tiene "restart" con indice fijo (0xFF / 0xFFFF / 0xFFFFFFFF segun el tipo). Un indice
+ * distinto lo resuelve el motor de reescritura de indices (gl31_idxgen.c) en la GPU; si eso no esta
+ * disponible, se avisa y se dibuja sin restart. */
+static void set_restart_fixed(GLboolean want)
 {
     gl31_state_t* s = gl31_state();
-    GLuint fixed = (type == GL_UNSIGNED_BYTE)  ? 0xFFu :
-                   (type == GL_UNSIGNED_SHORT) ? 0xFFFFu : 0xFFFFFFFFu;
-    GLboolean want = s->prim_restart;
-    if (want && s->prim_restart_index != fixed) {
-        gl31_stub_warn("glPrimitiveRestartIndex(indice distinto del fijo)");
-        want = GL_FALSE;
-    }
     if (want != s->restart_fixed_applied) {
         if (want) BE(glEnable)(GL_PRIMITIVE_RESTART_FIXED_INDEX);
         else      BE(glDisable)(GL_PRIMITIVE_RESTART_FIXED_INDEX);
@@ -72,67 +68,17 @@ static void apply_restart(GLenum type)
     }
 }
 
-void gl31_glDrawArrays(GLenum mode, GLint first, GLsizei count)
+static void apply_restart(GLenum type)
 {
-    if (first < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw(mode, count)) return;
-    BE(glDrawArrays)(mode, first, count);
-}
-
-void gl31_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices)
-{
-    if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    BE(glDrawElements)(mode, count, type, indices);
-}
-
-void gl31_glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei inst)
-{
-    if (first < 0 || inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw(mode, count)) return;
-    BE(glDrawArraysInstanced)(mode, first, count, inst);
-}
-
-void gl31_glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei inst)
-{
-    if (inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    BE(glDrawElementsInstanced)(mode, count, type, indices, inst);
-}
-
-void gl31_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
-{
-    if (end < start) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    BE(glDrawRangeElements)(mode, start, end, count, type, indices);
-}
-
-/* GLES 3.0 no tiene MultiDraw*: se emula con un bucle. */
-void gl31_glMultiDrawArrays(GLenum mode, const GLint* first, const GLsizei* count, GLsizei drawcount)
-{
-    GLsizei i;
-    if (drawcount < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw(mode, 0)) return;
-    if (drawcount && (!first || !count)) { gl31_set_error(GL_INVALID_VALUE); return; }
-    for (i = 0; i < drawcount; i++) {
-        if (first[i] < 0 || count[i] < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-        if (count[i] > 0) BE(glDrawArrays)(mode, first[i], count[i]);
+    gl31_state_t* s = gl31_state();
+    GLuint fixed = (type == GL_UNSIGNED_BYTE)  ? 0xFFu :
+                   (type == GL_UNSIGNED_SHORT) ? 0xFFFFu : 0xFFFFFFFFu;
+    GLboolean want = s->prim_restart;
+    if (want && s->prim_restart_index != fixed) {
+        gl31_stub_warn("glPrimitiveRestartIndex(indice distinto del fijo) sin compute de GPU disponible");
+        want = GL_FALSE;
     }
-}
-
-void gl31_glMultiDrawElements(GLenum mode, const GLsizei* count, GLenum type, const void* const* indices, GLsizei drawcount)
-{
-    GLsizei i;
-    if (drawcount < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    if (!pre_draw_elements(mode, 0, type)) return;
-    if (drawcount && (!count || !indices)) { gl31_set_error(GL_INVALID_VALUE); return; }
-    apply_restart(type);
-    for (i = 0; i < drawcount; i++) {
-        if (count[i] < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-        if (count[i] > 0) BE(glDrawElements)(mode, count[i], type, indices[i]);
-    }
+    set_restart_fixed(want);
 }
 
 /* ====================== base vertex (GL 3.2) ======================
@@ -208,47 +154,224 @@ static int baseinstance_ok(GLuint binst)
     return 1;
 }
 
+
+/* ====================== nucleo de dibujo ======================
+ * Todas las variantes (arrays/elements, instanciado, base vertex/instance, rango, multi) terminan
+ * aqui: un solo sitio decide si el draw se hace tal cual o con indices reescritos en GPU. */
+typedef struct {
+    int indexed, ranged;
+    GLenum mode; GLint first; GLsizei count; GLenum type; const void* indices;
+    GLsizei inst;                 /* < 0: llamada no instanciada */
+    GLint basevertex; GLuint binst;
+    GLuint start, end;
+} draw_t;
+
+/* Emite el draw con las funciones del backend; los indices ya son los finales. */
+static void emit(const draw_t* d)
+{
+    if (!d->indexed) {
+        if (d->inst < 0) { BE(glDrawArrays)(d->mode, d->first, d->count); return; }
+        if (!d->binst)   { BE(glDrawArraysInstanced)(d->mode, d->first, d->count, d->inst); return; }
+        if (gl31_caps.base_instance) { BE(glDrawArraysInstancedBaseInstance)(d->mode, d->first, d->count, d->inst, d->binst); return; }
+        if (!baseinstance_ok(d->binst)) {
+            gl31_stub_warn("baseinstance no multiplo del divisor de un atributo");
+            gl31_set_error(GL_INVALID_OPERATION);
+            return;
+        }
+        shift_attribs(0, d->binst, 1);
+        BE(glDrawArraysInstanced)(d->mode, d->first, d->count, d->inst);
+        shift_attribs(0, d->binst, 0);
+        return;
+    }
+    if (d->inst < 0) {
+        if (d->ranged) {
+            if (!d->basevertex) { BE(glDrawRangeElements)(d->mode, d->start, d->end, d->count, d->type, d->indices); return; }
+            if (gl31_caps.base_vertex) { BE(glDrawRangeElementsBaseVertex)(d->mode, d->start, d->end, d->count, d->type, d->indices, d->basevertex); return; }
+            shift_attribs(d->basevertex, 0, 1);
+            BE(glDrawRangeElements)(d->mode, d->start, d->end, d->count, d->type, d->indices);
+            shift_attribs(d->basevertex, 0, 0);
+            return;
+        }
+        if (!d->basevertex) { BE(glDrawElements)(d->mode, d->count, d->type, d->indices); return; }
+        if (gl31_caps.base_vertex) { BE(glDrawElementsBaseVertex)(d->mode, d->count, d->type, d->indices, d->basevertex); return; }
+        shift_attribs(d->basevertex, 0, 1);
+        BE(glDrawElements)(d->mode, d->count, d->type, d->indices);
+        shift_attribs(d->basevertex, 0, 0);
+        return;
+    }
+    if (!d->binst) {
+        if (!d->basevertex) { BE(glDrawElementsInstanced)(d->mode, d->count, d->type, d->indices, d->inst); return; }
+        if (gl31_caps.base_vertex) { BE(glDrawElementsInstancedBaseVertex)(d->mode, d->count, d->type, d->indices, d->inst, d->basevertex); return; }
+        shift_attribs(d->basevertex, 0, 1);
+        BE(glDrawElementsInstanced)(d->mode, d->count, d->type, d->indices, d->inst);
+        shift_attribs(d->basevertex, 0, 0);
+        return;
+    }
+    if (gl31_caps.base_instance && gl31_be.glDrawElementsInstancedBaseVertexBaseInstance) {
+        BE(glDrawElementsInstancedBaseVertexBaseInstance)(d->mode, d->count, d->type, d->indices, d->inst, d->basevertex, d->binst);
+        return;
+    }
+    if (gl31_caps.base_instance && !d->basevertex) {
+        BE(glDrawElementsInstancedBaseInstance)(d->mode, d->count, d->type, d->indices, d->inst, d->binst);
+        return;
+    }
+    if (!baseinstance_ok(d->binst)) {
+        gl31_stub_warn("baseinstance no multiplo del divisor de un atributo");
+        gl31_set_error(GL_INVALID_OPERATION);
+        return;
+    }
+    shift_attribs(d->basevertex, d->binst, 1);
+    BE(glDrawElementsInstanced)(d->mode, d->count, d->type, d->indices, d->inst);
+    shift_attribs(d->basevertex, d->binst, 0);
+}
+
+static void core_draw(const draw_t* d)
+{
+    GLenum om = d->mode;
+    int unavailable = 0, op;
+    if (d->count <= 0) { if (d->indexed) apply_restart(d->type); return; }
+    op = gl31_idx_needed(d->mode, d->indexed, d->type, &om, &unavailable);
+    if (op != IDX_NONE && !unavailable) {
+        GLsizei oc = 0;
+        GLuint buf = gl31_idx_generate(op, d->mode, d->indexed, d->type, d->first, d->count, (uintptr_t)d->indices, &oc);
+        if (buf) {
+            if (oc > 0) {
+                draw_t r = *d;
+                GLint saved = 0;
+                BE(glGetIntegerv)(GL_ELEMENT_ARRAY_BUFFER_BINDING, &saved);
+                BE(glBindBuffer)(GL_ELEMENT_ARRAY_BUFFER, buf);
+                set_restart_fixed(GL_TRUE);              /* las ranuras vacias son 0xFFFFFFFF */
+                r.indexed = 1; r.ranged = 0; r.mode = om; r.count = oc; r.type = GL_UNSIGNED_INT; r.indices = NULL;
+                if (!d->indexed) r.basevertex = 0;
+                emit(&r);
+                BE(glBindBuffer)(GL_ELEMENT_ARRAY_BUFFER, (GLuint)saved);
+            }
+            gl31_xfb_account(d->mode, d->count, d->inst < 0 ? 1 : d->inst);
+            return;
+        }
+        unavailable = 1;
+    }
+    if (op != IDX_NONE && unavailable && op != IDX_RESTART)
+        gl31_stub_warn(op == IDX_PROVOKE ? "glProvokingVertex(FIRST_VERTEX_CONVENTION)" : "glPolygonMode(LINE/POINT)");
+    if (d->indexed) apply_restart(d->type);
+    emit(d);
+    gl31_xfb_account(d->mode, d->count, d->inst < 0 ? 1 : d->inst);
+}
+
+static draw_t mk_arrays(GLenum mode, GLint first, GLsizei count, GLsizei inst, GLuint binst)
+{
+    draw_t d; memset(&d, 0, sizeof d);
+    d.mode = mode; d.first = first; d.count = count; d.inst = inst; d.binst = binst;
+    return d;
+}
+
+static draw_t mk_elems(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei inst, GLint bv, GLuint binst)
+{
+    draw_t d; memset(&d, 0, sizeof d);
+    d.indexed = 1; d.mode = mode; d.count = count; d.type = type; d.indices = indices;
+    d.inst = inst; d.basevertex = bv; d.binst = binst;
+    return d;
+}
+
+void gl31_glDrawArrays(GLenum mode, GLint first, GLsizei count)
+{
+    draw_t d;
+    if (first < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw(mode, count)) return;
+    d = mk_arrays(mode, first, count, -1, 0);
+    core_draw(&d);
+}
+
+void gl31_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices)
+{
+    draw_t d;
+    if (!pre_draw_elements(mode, count, type)) return;
+    d = mk_elems(mode, count, type, indices, -1, 0, 0);
+    core_draw(&d);
+}
+
+void gl31_glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei inst)
+{
+    draw_t d;
+    if (first < 0 || inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw(mode, count)) return;
+    d = mk_arrays(mode, first, count, inst, 0);
+    core_draw(&d);
+}
+
+void gl31_glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei inst)
+{
+    draw_t d;
+    if (inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw_elements(mode, count, type)) return;
+    d = mk_elems(mode, count, type, indices, inst, 0, 0);
+    core_draw(&d);
+}
+
+void gl31_glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void* indices)
+{
+    draw_t d;
+    if (end < start) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw_elements(mode, count, type)) return;
+    d = mk_elems(mode, count, type, indices, -1, 0, 0);
+    d.ranged = 1; d.start = start; d.end = end;
+    core_draw(&d);
+}
+
+/* GLES 3.0 no tiene MultiDraw*: se emula con un bucle. */
+void gl31_glMultiDrawArrays(GLenum mode, const GLint* first, const GLsizei* count, GLsizei drawcount)
+{
+    GLsizei i;
+    if (drawcount < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw(mode, 0)) return;
+    if (drawcount && (!first || !count)) { gl31_set_error(GL_INVALID_VALUE); return; }
+    for (i = 0; i < drawcount; i++) {
+        draw_t d;
+        if (first[i] < 0 || count[i] < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+        if (count[i] > 0) { d = mk_arrays(mode, first[i], count[i], -1, 0); core_draw(&d); }
+    }
+}
+
+void gl31_glMultiDrawElements(GLenum mode, const GLsizei* count, GLenum type, const void* const* indices, GLsizei drawcount)
+{
+    GLsizei i;
+    if (drawcount < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+    if (!pre_draw_elements(mode, 0, type)) return;
+    if (drawcount && (!count || !indices)) { gl31_set_error(GL_INVALID_VALUE); return; }
+    for (i = 0; i < drawcount; i++) {
+        draw_t d;
+        if (count[i] < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
+        if (count[i] > 0) { d = mk_elems(mode, count[i], type, indices[i], -1, 0, 0); core_draw(&d); }
+    }
+}
+
 void gl31_glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type, const void* indices, GLint basevertex)
 {
+    draw_t d;
     if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    if (gl31_caps.base_vertex) { BE(glDrawElementsBaseVertex)(mode, count, type, indices, basevertex); return; }
-    if (!basevertex) { BE(glDrawElements)(mode, count, type, indices); return; }
-    shift_attribs(basevertex, 0, 1);
-    BE(glDrawElements)(mode, count, type, indices);
-    shift_attribs(basevertex, 0, 0);
+    d = mk_elems(mode, count, type, indices, -1, basevertex, 0);
+    core_draw(&d);
 }
 
 void gl31_glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,
                                         const void* indices, GLint basevertex)
 {
+    draw_t d;
     if (end < start) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    if (gl31_caps.base_vertex) {
-        BE(glDrawRangeElementsBaseVertex)(mode, start, end, count, type, indices, basevertex);
-        return;
-    }
-    if (!basevertex) { BE(glDrawRangeElements)(mode, start, end, count, type, indices); return; }
-    shift_attribs(basevertex, 0, 1);
-    BE(glDrawRangeElements)(mode, start, end, count, type, indices);
-    shift_attribs(basevertex, 0, 0);
+    d = mk_elems(mode, count, type, indices, -1, basevertex, 0);
+    d.ranged = 1; d.start = start; d.end = end;
+    core_draw(&d);
 }
 
 void gl31_glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count, GLenum type, const void* indices,
                                             GLsizei inst, GLint basevertex)
 {
+    draw_t d;
     if (inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    if (gl31_caps.base_vertex) {
-        BE(glDrawElementsInstancedBaseVertex)(mode, count, type, indices, inst, basevertex);
-        return;
-    }
-    if (!basevertex) { BE(glDrawElementsInstanced)(mode, count, type, indices, inst); return; }
-    shift_attribs(basevertex, 0, 1);
-    BE(glDrawElementsInstanced)(mode, count, type, indices, inst);
-    shift_attribs(basevertex, 0, 0);
+    d = mk_elems(mode, count, type, indices, inst, basevertex, 0);
+    core_draw(&d);
 }
 
 void gl31_glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei* count, GLenum type,
@@ -258,37 +381,23 @@ void gl31_glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei* count, GLenu
     if (drawcount < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!pre_draw_elements(mode, 0, type)) return;
     if (drawcount && (!count || !indices || !basevertex)) { gl31_set_error(GL_INVALID_VALUE); return; }
-    apply_restart(type);
     for (i = 0; i < drawcount; i++) {
+        draw_t d;
         if (count[i] < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
         if (count[i] == 0) continue;
-        if (gl31_caps.base_vertex) {
-            BE(glDrawElementsBaseVertex)(mode, count[i], type, indices[i], basevertex[i]);
-        } else if (!basevertex[i]) {
-            BE(glDrawElements)(mode, count[i], type, indices[i]);
-        } else {
-            shift_attribs(basevertex[i], 0, 1);
-            BE(glDrawElements)(mode, count[i], type, indices[i]);
-            shift_attribs(basevertex[i], 0, 0);
-        }
+        d = mk_elems(mode, count[i], type, indices[i], -1, basevertex[i], 0);
+        core_draw(&d);
     }
 }
 
 /* ---- GL 4.2: base instance (nativo con EXT_base_instance, si no emulado) ---- */
 void gl31_glDrawArraysInstancedBaseInstance(GLenum mode, GLint first, GLsizei count, GLsizei inst, GLuint binst)
 {
+    draw_t d;
     if (first < 0 || inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!pre_draw(mode, count)) return;
-    if (gl31_caps.base_instance) { BE(glDrawArraysInstancedBaseInstance)(mode, first, count, inst, binst); return; }
-    if (!binst) { BE(glDrawArraysInstanced)(mode, first, count, inst); return; }
-    if (!baseinstance_ok(binst)) {
-        gl31_stub_warn("baseinstance no multiplo del divisor de un atributo");
-        gl31_set_error(GL_INVALID_OPERATION);
-        return;
-    }
-    shift_attribs(0, binst, 1);
-    BE(glDrawArraysInstanced)(mode, first, count, inst);
-    shift_attribs(0, binst, 0);
+    d = mk_arrays(mode, first, count, inst, binst);
+    core_draw(&d);
 }
 
 void gl31_glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void* indices,
@@ -300,34 +409,16 @@ void gl31_glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum
 void gl31_glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type, const void* indices,
                                                         GLsizei inst, GLint basevertex, GLuint binst)
 {
+    draw_t d;
     if (inst < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (!pre_draw_elements(mode, count, type)) return;
-    apply_restart(type);
-    if (gl31_caps.base_instance && gl31_be.glDrawElementsInstancedBaseVertexBaseInstance) {
-        BE(glDrawElementsInstancedBaseVertexBaseInstance)(mode, count, type, indices, inst, basevertex, binst);
-        return;
-    }
-    if (gl31_caps.base_instance && !basevertex) {
-        BE(glDrawElementsInstancedBaseInstance)(mode, count, type, indices, inst, binst);
-        return;
-    }
-    if (!basevertex && !binst) { BE(glDrawElementsInstanced)(mode, count, type, indices, inst); return; }
-    if (!baseinstance_ok(binst)) {
-        gl31_stub_warn("baseinstance no multiplo del divisor de un atributo");
-        gl31_set_error(GL_INVALID_OPERATION);
-        return;
-    }
-    if (gl31_caps.base_vertex && !binst) {
-        BE(glDrawElementsInstancedBaseVertex)(mode, count, type, indices, inst, basevertex);
-        return;
-    }
-    shift_attribs(basevertex, binst, 1);
-    BE(glDrawElementsInstanced)(mode, count, type, indices, inst);
-    shift_attribs(basevertex, binst, 0);
+    d = mk_elems(mode, count, type, indices, inst, basevertex, binst);
+    core_draw(&d);
 }
 
-/* ES siempre usa el ultimo vertice (que es el valor por defecto de GL 3.2).
- * FIRST_VERTEX_CONVENTION solo existe con EXT/ANGLE_provoking_vertex. */
+/* ES siempre usa el ultimo vertice (el valor por defecto de GL 3.2). FIRST_VERTEX_CONVENTION se usa
+ * nativo con EXT/ANGLE_provoking_vertex; sin ella, el motor de indices (gl31_idxgen.c) rota cada
+ * primitiva en la GPU para que el vertice provocador quede el ultimo. */
 void gl31_glProvokingVertex(GLenum mode)
 {
     gl31_state_t* s = gl31_state();
@@ -335,15 +426,7 @@ void gl31_glProvokingVertex(GLenum mode)
         gl31_set_error(GL_INVALID_ENUM);
         return;
     }
-    if (gl31_caps.provoking_vertex) {
-        BE(glProvokingVertex)(mode);
-        s->provoking_vertex = mode;
-        return;
-    }
-    if (mode == GL_FIRST_VERTEX_CONVENTION) {
-        gl31_stub_warn("glProvokingVertex(GL_FIRST_VERTEX_CONVENTION)");
-        return;                                  /* el estado sigue siendo LAST: es lo que hace el backend */
-    }
+    if (gl31_caps.provoking_vertex) BE(glProvokingVertex)(mode);
     s->provoking_vertex = mode;
 }
 
@@ -395,22 +478,4 @@ void gl31_glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void* indi
     if (!stride) stride = 20;                       /* DrawElementsIndirectCommand */
     for (i = 0; i < drawcount; i++)
         BE(glDrawElementsIndirect)(mode, type, (const void*)((uintptr_t)indirect + (uintptr_t)i * (uintptr_t)stride));
-}
-
-/* glDrawTransformFeedback*: ES 3.0 no registra cuantos vertices capturo un objeto TF */
-void gl31_glDrawTransformFeedback(GLenum mode, GLuint id)
-{
-    (void)mode; (void)id;
-    gl31_stub_warn("glDrawTransformFeedback");
-    gl31_set_error(GL_INVALID_OPERATION);
-}
-void gl31_glDrawTransformFeedbackInstanced(GLenum mode, GLuint id, GLsizei inst)
-{
-    (void)inst;
-    gl31_glDrawTransformFeedback(mode, id);
-}
-void gl31_glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint stream)
-{
-    (void)stream;
-    gl31_glDrawTransformFeedback(mode, id);
 }

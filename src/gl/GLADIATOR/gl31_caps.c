@@ -1,6 +1,8 @@
 /* gl31_caps.c - inicializacion, deteccion de capacidades del backend y carga de
  * las funciones opcionales (las que GLES 3.0 base no trae). */
 #include "gl31.h"
+#include "gl31_vk.h"
+#include "gl31_idx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,7 +113,14 @@ static void detect_capabilities(void)
             gl31_caps.timer = 1;
         else if (has_ext(e, "GL_EXT_blend_func_extended", NULL))
             gl31_caps.dual_src = 1;
+        else if (has_ext(e, "GL_EXT_buffer_storage", NULL))
+            gl31_caps.buffer_storage = 1;
+        else if (has_ext(e, "GL_EXT_memory_object", NULL))
+            gl31_caps.memobj = 1;
+        else if (has_ext(e, "GL_EXT_memory_object_fd", NULL))
+            gl31_caps.memobj_fd = 1;
     }
+    gl31_caps.memobj_fd = gl31_caps.memobj_fd && gl31_caps.memobj;
 
     /* Lo que es core a partir de cierta version de ES */
     gl31_caps.glsl_es = 300;
@@ -155,6 +164,7 @@ int gl31_init(gl31_loader_fn loader)
 {
     int missing = 0;
     if (!loader) return -1;
+    gl31_vk_set_loader(loader);
 
     memset(&gl31_be, 0, sizeof(gl31_be));
 
@@ -290,20 +300,46 @@ int gl31_init(gl31_loader_fn loader)
         LOAD_OPT(glGetObjectLabel);
         if (!gl31_be.glDebugMessageCallback) gl31_caps.debug = 0;
     }
+    /* LORICA_VK_TIMER=1: ignorar EXT_disjoint_timer_query y medir con timestamps de Vulkan
+     * (util si la extension del driver GL existe pero es poco fiable, y para pruebas) */
+    if (getenv("LORICA_VK_TIMER") && atoi(getenv("LORICA_VK_TIMER")) == 1) gl31_caps.timer = 0;
     if (gl31_caps.timer) {
         LOAD_OPT(glQueryCounter);
         LOAD_OPT(glGetQueryObjecti64v);
         LOAD_OPT(glGetQueryObjectui64v);
         if (!gl31_be.glQueryCounter || !gl31_be.glGetQueryObjectui64v) gl31_caps.timer = 0;
     }
+    if (gl31_caps.buffer_storage) {
+        LOAD_OPT(glBufferStorage);
+        if (!gl31_be.glBufferStorage) gl31_caps.buffer_storage = 0;
+    }
+    if (gl31_caps.memobj_fd) {
+        LOAD_OPT(glCreateMemoryObjectsEXT); LOAD_OPT(glDeleteMemoryObjectsEXT);
+        LOAD_OPT(glImportMemoryFdEXT); LOAD_OPT(glBufferStorageMemEXT);
+        if (!gl31_be.glCreateMemoryObjectsEXT || !gl31_be.glDeleteMemoryObjectsEXT ||
+            !gl31_be.glImportMemoryFdEXT || !gl31_be.glBufferStorageMemEXT) gl31_caps.memobj_fd = 0;
+    }
     if (gl31_caps.glsl_es < 300) gl31_caps.dual_src = 0;
+    {   /* LORICA_DISABLE_CAPS=es31,copy_image,...: apaga capacidades del backend (pruebas de las rutas de respaldo
+         * y emulacion de un GPU/driver mas limitado). Nombres: es31 copy_image draw_buf_indexed sample_shading
+         * multisample_tex ms_array tess geometry texture_view cube_array dual_src */
+        const char* env = getenv("LORICA_DISABLE_CAPS");
+        if (env) {
+#define OFF(n) if (strstr(env, #n)) gl31_caps.n = 0
+            OFF(es31); OFF(copy_image); OFF(draw_buf_indexed); OFF(sample_shading); OFF(multisample_tex);
+            OFF(ms_array); OFF(tess); OFF(geometry); OFF(texture_view); OFF(cube_array); OFF(dual_src);
+#undef OFF
+            if (strstr(env, "es31")) gl31_caps.multisample_tex = 0;
+        }
+    }
     {   /* tope de version anunciada */
         const char* env = getenv("LORICA_GL_MAX_VERSION");
         int a = 0, b = 0;
         if (env && sscanf(env, "%d.%d", &a, &b) == 2) gl31_set_max_version(a, b);
     }
 
-    fprintf(stderr, "[caps] es=%d.%d glsl=%d geom=%d es31=%d tess=%d cube=%d ss=%d dbi=%d tv=%d ci=%d ms=%d\n", gl31_caps.es_major, gl31_caps.es_minor, gl31_caps.glsl_es, gl31_caps.geometry, gl31_caps.es31, gl31_caps.tess, gl31_caps.cube_array, gl31_caps.sample_shading, gl31_caps.draw_buf_indexed, gl31_caps.texture_view, gl31_caps.copy_image, gl31_caps.ms_array);
+    if (getenv("LIBGL_DEBUG") || getenv("LORICA_DEBUG"))
+        fprintf(stderr, "[caps] es=%d.%d glsl=%d geom=%d es31=%d tess=%d cube=%d ss=%d dbi=%d tv=%d ci=%d ms=%d\n", gl31_caps.es_major, gl31_caps.es_minor, gl31_caps.glsl_es, gl31_caps.geometry, gl31_caps.es31, gl31_caps.tess, gl31_caps.cube_array, gl31_caps.sample_shading, gl31_caps.draw_buf_indexed, gl31_caps.texture_view, gl31_caps.copy_image, gl31_caps.ms_array);
     gl31_query_reset();
     gl31_state_init();
     return 0;
@@ -313,7 +349,10 @@ void gl31_shutdown(void)
 {
     gl31_link_shutdown();
     gl31_vao_shutdown();
+    gl31_fbo_shutdown_remap();
     gl31_tex_shutdown();
+    gl31_buffer_shutdown();
+    gl31_idx_shutdown();
     gl31_query_reset();
     memset(&gl31_be, 0, sizeof(gl31_be));
     memset(&gl31_caps, 0, sizeof(gl31_caps));

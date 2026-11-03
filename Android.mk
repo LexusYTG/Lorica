@@ -105,6 +105,9 @@ LOCAL_SRC_FILES := \
 	src/gl/GLADIATOR/gl31_compute.c \
 	src/gl/GLADIATOR/gl31_gl4.c \
 	src/gl/GLADIATOR/gl31_dsa.c \
+	src/gl/GLADIATOR/gl31_vk.c \
+	src/gl/GLADIATOR/gl31_idxgen.c \
+	src/vk/lvk.c \
 	src/glx/glx.c \
 	src/glx/lookup.c \
 	src/glx/gbm.c \

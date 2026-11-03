@@ -6,6 +6,7 @@
  * en el estado propio para que Enable/IsEnabled/Get* sean coherentes en vez
  * de acabar en GL_INVALID_ENUM del backend. */
 #include "gl31.h"
+#include "gl31_vk.h"
 #include <string.h>
 
 #ifndef GL_DEBUG_OUTPUT
@@ -58,6 +59,7 @@ typedef struct { GLenum cap; GLboolean def; const char* warn; } soft_cap_t;
 /* warn != NULL: activarlo no tiene efecto real y se avisa una vez */
 static const soft_cap_t k_soft[] = {
     { GL_MULTISAMPLE,           GL_TRUE,  NULL },
+    { GL_SAMPLE_SHADING,        GL_FALSE, NULL },     /* se reenvia ademas si el backend lo tiene */
     { GL_LINE_SMOOTH,           GL_FALSE, NULL },
     { GL_POLYGON_SMOOTH,        GL_FALSE, NULL },
     { GL_SAMPLE_ALPHA_TO_ONE,   GL_FALSE, NULL },
@@ -68,14 +70,14 @@ static const soft_cap_t k_soft[] = {
     { GL_FRAMEBUFFER_SRGB,      GL_FALSE, NULL },
     { GL_DEBUG_OUTPUT,          GL_FALSE, NULL },
     { GL_DEBUG_OUTPUT_SYNCHRONOUS, GL_FALSE, NULL },
-    { GL_CLIP_DISTANCE0 + 0,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 1,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 2,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 3,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 4,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 5,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 6,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
-    { GL_CLIP_DISTANCE0 + 7,    GL_FALSE, "glEnable(GL_CLIP_DISTANCEi)" },
+    { GL_CLIP_DISTANCE0 + 0,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 1,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 2,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 3,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 4,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 5,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 6,    GL_FALSE, NULL },
+    { GL_CLIP_DISTANCE0 + 7,    GL_FALSE, NULL },
 };
 #define N_SOFT ((int)(sizeof k_soft / sizeof k_soft[0]))
 
@@ -86,17 +88,36 @@ static int soft_index(GLenum cap)
     return -1;
 }
 
+/* caps que alimentan los uniforms propios: al cambiar hay que resubirlos */
+static int lu_cap(GLenum cap)
+{
+    return cap == GL_PROGRAM_POINT_SIZE || (cap >= GL_CLIP_DISTANCE0 && cap < GL_CLIP_DISTANCE0 + 8) ||
+           (cap == GL_DEPTH_CLAMP && !gl31_caps.depth_clamp);
+}
+
 void gl31_render_state_defaults(gl31_state_t* s)
 {
     int i, k;
     for (i = 0; i < N_SOFT; i++) s->softcap[i] = k_soft[i].def;
     for (i = 0; i < 8; i++) for (k = 0; k < 4; k++) s->colormask[i][k] = GL_TRUE;
+    for (i = 0; i < GL31_MAX_DRAW_BUFFERS; i++) {
+        s->blend_f[i].srgb = s->blend_f[i].sa = GL_ONE;
+        s->blend_f[i].drgb = s->blend_f[i].da = GL_ZERO;
+        s->blend_f[i].erg = s->blend_f[i].ea = GL_FUNC_ADD;
+    }
     s->pack_alignment = 4;
+    s->clamp_read_color = GL_FIXED_ONLY;
+    s->clamp_vertex_color = GL_TRUE;
+    s->clamp_fragment_color = GL_FIXED_ONLY;
     s->unpack_alignment = 4;
     s->provoking_vertex = GL_LAST_VERTEX_CONVENTION;
     s->point_size = 1.0f;
     s->point_fade_threshold = 1.0f;
     s->point_sprite_origin = GL_UPPER_LEFT;
+    s->clip_origin = GL_LOWER_LEFT;
+    s->clip_depth = GL_NEGATIVE_ONE_TO_ONE;
+    s->front_face_app = GL_CCW;
+    s->polygon_mode = GL_FILL;
 }
 
 /* 1 = es una cap "blanda" y se sirvio aqui */
@@ -114,16 +135,16 @@ void gl31_glEnable(GLenum cap)
     int i;
     if (cap == GL_PRIMITIVE_RESTART) { s->prim_restart = GL_TRUE; return; }
     if (cap == GL_PRIMITIVE_RESTART_FIXED_INDEX) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (cap == GL_DEPTH_CLAMP && !gl31_caps.depth_clamp) { s->depth_clamp_soft = GL_TRUE; gl31_lu_bump(); return; }
     if ((i = soft_index(cap)) >= 0) {
         s->softcap[i] = GL_TRUE;
+        if (lu_cap(cap)) gl31_lu_bump();
         if (k_soft[i].warn) gl31_stub_warn(k_soft[i].warn);
         if (gl31_caps.debug && (cap == GL_DEBUG_OUTPUT || cap == GL_DEBUG_OUTPUT_SYNCHRONOUS)) BE(glEnable)(cap);
+        if (cap == GL_SAMPLE_SHADING && gl31_caps.sample_shading) BE(glEnable)(cap);
         return;
     }
-    if (cap == GL_SAMPLE_SHADING && !gl31_caps.sample_shading) {
-        gl31_stub_warn("glEnable(GL_SAMPLE_SHADING) (backend sin OES_sample_shading)");
-        return;
-    }
+    if (cap == GL_BLEND) { int k; for (k = 0; k < GL31_MAX_DRAW_BUFFERS; k++) s->blend_en[k] = GL_TRUE; }
     BE(glEnable)(cap);
 }
 
@@ -133,12 +154,15 @@ void gl31_glDisable(GLenum cap)
     int i;
     if (cap == GL_PRIMITIVE_RESTART) { s->prim_restart = GL_FALSE; return; }
     if (cap == GL_PRIMITIVE_RESTART_FIXED_INDEX) { gl31_set_error(GL_INVALID_ENUM); return; }
+    if (cap == GL_DEPTH_CLAMP && !gl31_caps.depth_clamp) { s->depth_clamp_soft = GL_FALSE; gl31_lu_bump(); return; }
     if ((i = soft_index(cap)) >= 0) {
         s->softcap[i] = GL_FALSE;
+        if (lu_cap(cap)) gl31_lu_bump();
         if (gl31_caps.debug && (cap == GL_DEBUG_OUTPUT || cap == GL_DEBUG_OUTPUT_SYNCHRONOUS)) BE(glDisable)(cap);
+        if (cap == GL_SAMPLE_SHADING && gl31_caps.sample_shading) BE(glDisable)(cap);
         return;
     }
-    if (cap == GL_SAMPLE_SHADING && !gl31_caps.sample_shading) return;
+    if (cap == GL_BLEND) { int k; for (k = 0; k < GL31_MAX_DRAW_BUFFERS; k++) s->blend_en[k] = GL_FALSE; }
     BE(glDisable)(cap);
 }
 
@@ -148,6 +172,7 @@ GLboolean gl31_glIsEnabled(GLenum cap)
     int i;
     if (cap == GL_PRIMITIVE_RESTART) return s->prim_restart;
     if (cap == GL_PRIMITIVE_RESTART_FIXED_INDEX) { gl31_set_error(GL_INVALID_ENUM); return GL_FALSE; }
+    if (cap == GL_DEPTH_CLAMP && !gl31_caps.depth_clamp) return s->depth_clamp_soft;
     if ((i = soft_index(cap)) >= 0) return s->softcap[i];
     return BE(glIsEnabled)(cap);
 }
@@ -162,37 +187,106 @@ static GLint max_draw_buffers(void)
     return m;
 }
 
-/* 1 = valido. Solo GL_BLEND es indexable en GL 3.1. */
+/* 1 = valido. Indexables: GL_BLEND (por draw buffer) y GL_SCISSOR_TEST (por viewport, GL 4.1). */
 static int indexed_ok(GLenum cap, GLuint index)
 {
+    if (cap == GL_SCISSOR_TEST) {
+        if (index >= 16) { gl31_set_error(GL_INVALID_VALUE); return 0; }
+        return 1;
+    }
     if (cap != GL_BLEND) { gl31_set_error(GL_INVALID_ENUM); return 0; }
     if ((GLint)index >= max_draw_buffers()) { gl31_set_error(GL_INVALID_VALUE); return 0; }
     return 1;
 }
 
+/* buffers de dibujo activos (los que no son GL_NONE) en este momento */
+static unsigned active_draw_mask(int n)
+{
+    unsigned m = 0; int i;
+    for (i = 0; i < n && i < 32; i++) {
+        GLint v = 0;
+        BE(glGetIntegerv)(GL_DRAW_BUFFER0 + i, &v);
+        if (v != (GLint)GL_NONE) m |= 1u << i;
+    }
+    return m;
+}
+
+/* El backend sin draw_buffers_indexed tiene un unico GL_BLEND. Manda el del buffer 0; si algun otro buffer
+ * activo pide otro valor, ES no puede expresarlo y se avisa una vez. */
+void gl31_render_sync_blend(void)
+{
+    gl31_state_t* s = gl31_state();
+    int i, ref = 0, n = max_draw_buffers();
+    unsigned act;
+    if (n > GL31_MAX_DRAW_BUFFERS) n = GL31_MAX_DRAW_BUFFERS;
+    act = active_draw_mask(n);
+    s->idx_div &= ~1u;
+    for (i = 1; i < n; i++) if (s->blend_en[i] != s->blend_en[0]) { s->idx_div |= 1u; break; }
+    for (i = 0; i < n; i++) if (act & (1u << i)) { ref = i; break; }     /* manda el primer buffer activo */
+    if (s->blend_en[ref]) BE(glEnable)(GL_BLEND); else BE(glDisable)(GL_BLEND);
+    for (i = ref + 1; i < n; i++)
+        if ((act & (1u << i)) && s->blend_en[i] != s->blend_en[ref]) {
+            gl31_stub_warn("glEnablei(GL_BLEND) distinto por buffer (backend sin draw_buffers_indexed)");
+            break;
+        }
+}
+
+/* tras cambiar los buffers de dibujo (glDrawBuffers / glBindFramebuffer) hay que reaplicar el estado por
+ * buffer que el backend sin draw_buffers_indexed solo puede tener en una copia global */
+void gl31_render_resync_indexed(void)
+{
+    gl31_state_t* s = gl31_state();
+    if (gl31_caps.draw_buf_indexed || !s->idx_div) return;
+    if (s->idx_div & 1u) gl31_render_sync_blend();
+    if (s->idx_div & 2u) gl31_render_sync_blendfn();
+    if (s->idx_div & 4u) {
+        int i, ref = 0, n = max_draw_buffers();
+        unsigned act;
+        if (n > GL31_MAX_DRAW_BUFFERS) n = GL31_MAX_DRAW_BUFFERS;
+        act = active_draw_mask(n);
+        for (i = 0; i < n; i++) if (act & (1u << i)) { ref = i; break; }
+        BE(glColorMask)(s->colormask[ref][0], s->colormask[ref][1], s->colormask[ref][2], s->colormask[ref][3]);
+    }
+}
+
+/* GL_BLEND sin draw_buffers_indexed: si los demas draw buffers tienen el mismo estado se usa el global;
+ * si difieren, el estado se guarda por indice y glDraw* lo reconcilia con el que haya activo
+ * (ver gl31_render_apply_blend). Aqui solo se registra. */
 void gl31_glEnablei(GLenum cap, GLuint index)
 {
+    gl31_state_t* s = gl31_state();
     if (!indexed_ok(cap, index)) return;
+    if (cap == GL_SCISSOR_TEST) {
+        s->sci_enable[index] = GL_TRUE;
+        if (index == 0) BE(glEnable)(GL_SCISSOR_TEST);
+        return;
+    }
     if (gl31_caps.draw_buf_indexed) { BE(glEnablei)(cap, index); return; }
-    if (max_draw_buffers() == 1) { BE(glEnable)(cap); return; }
-    gl31_stub_warn("glEnablei (backend sin draw_buffers_indexed)");
-    gl31_set_error(GL_INVALID_OPERATION);
+    s->blend_en[index] = GL_TRUE;
+    gl31_render_sync_blend();
 }
 
 void gl31_glDisablei(GLenum cap, GLuint index)
 {
+    gl31_state_t* s = gl31_state();
     if (!indexed_ok(cap, index)) return;
+    if (cap == GL_SCISSOR_TEST) {
+        s->sci_enable[index] = GL_FALSE;
+        if (index == 0) BE(glDisable)(GL_SCISSOR_TEST);
+        return;
+    }
     if (gl31_caps.draw_buf_indexed) { BE(glDisablei)(cap, index); return; }
-    if (max_draw_buffers() == 1) { BE(glDisable)(cap); return; }
-    gl31_stub_warn("glDisablei (backend sin draw_buffers_indexed)");
-    gl31_set_error(GL_INVALID_OPERATION);
+    s->blend_en[index] = GL_FALSE;
+    gl31_render_sync_blend();
 }
 
 GLboolean gl31_glIsEnabledi(GLenum cap, GLuint index)
 {
+    gl31_state_t* s = gl31_state();
     if (!indexed_ok(cap, index)) return GL_FALSE;
+    if (cap == GL_SCISSOR_TEST) return index == 0 ? BE(glIsEnabled)(GL_SCISSOR_TEST) : s->sci_enable[index];
     if (gl31_caps.draw_buf_indexed) return BE(glIsEnabledi)(cap, index);
-    return BE(glIsEnabled)(cap);
+    return s->blend_en[index];
 }
 
 void gl31_glColorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a)
@@ -212,11 +306,24 @@ void gl31_glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLbo
     if ((GLint)index >= max_draw_buffers()) { gl31_set_error(GL_INVALID_VALUE); return; }
     if (gl31_caps.draw_buf_indexed) {
         BE(glColorMaski)(index, r, g, b, a);
-    } else if (max_draw_buffers() == 1) {
-        BE(glColorMask)(r, g, b, a);
     } else {
-        gl31_stub_warn("glColorMaski (backend sin draw_buffers_indexed)");
-        gl31_set_error(GL_INVALID_OPERATION);
+        /* un unico ColorMask global: manda el del primer buffer activo; si otro buffer activo difiere,
+         * ES no lo puede expresar */
+        int i, ref = 0, n = max_draw_buffers();
+        unsigned act;
+        s->colormask[index][0] = r; s->colormask[index][1] = g;
+        s->colormask[index][2] = b; s->colormask[index][3] = a;
+        if (n > GL31_MAX_DRAW_BUFFERS) n = GL31_MAX_DRAW_BUFFERS;
+        act = active_draw_mask(n);
+        s->idx_div &= ~4u;
+        for (i = 1; i < n; i++) if (memcmp(s->colormask[i], s->colormask[0], 4) != 0) { s->idx_div |= 4u; break; }
+        for (i = 0; i < n; i++) if (act & (1u << i)) { ref = i; break; }
+        BE(glColorMask)(s->colormask[ref][0], s->colormask[ref][1], s->colormask[ref][2], s->colormask[ref][3]);
+        for (i = ref + 1; i < n; i++)
+            if ((act & (1u << i)) && memcmp(s->colormask[i], s->colormask[ref], 4) != 0) {
+                gl31_stub_warn("glColorMaski distinto por buffer (backend sin draw_buffers_indexed)");
+                break;
+            }
         return;
     }
     s->colormask[index][0] = r; s->colormask[index][1] = g;
@@ -275,13 +382,45 @@ void gl31_glDepthRange(GLdouble n, GLdouble f)
 void gl31_glDepthFunc(GLenum func) { BE(glDepthFunc)(func); }
 void gl31_glDepthMask(GLboolean flag) { BE(glDepthMask)(flag); }
 
-void gl31_glBlendFunc(GLenum sf, GLenum df) { BE(glBlendFunc)(sf, df); }
+/* las funciones globales de mezcla fijan todos los buffers; se recuerdan por buffer para poder resolver
+ * glBlendFunci/glBlendEquationi en backends sin draw_buffers_indexed (ver gl31_render_sync_blendfn) */
+void gl31_glBlendFunc(GLenum sf, GLenum df) { gl31_glBlendFuncSeparate(sf, df, sf, df); }
 void gl31_glBlendFuncSeparate(GLenum srgb, GLenum drgb, GLenum sa, GLenum da)
 {
+    gl31_state_t* s = gl31_state();
+    int i;
     BE(glBlendFuncSeparate)(srgb, drgb, sa, da);
+    for (i = 0; i < GL31_MAX_DRAW_BUFFERS; i++) { s->blend_f[i].srgb = srgb; s->blend_f[i].drgb = drgb; s->blend_f[i].sa = sa; s->blend_f[i].da = da; }
 }
-void gl31_glBlendEquation(GLenum mode) { BE(glBlendEquation)(mode); }
-void gl31_glBlendEquationSeparate(GLenum rgb, GLenum alpha) { BE(glBlendEquationSeparate)(rgb, alpha); }
+void gl31_glBlendEquation(GLenum mode) { gl31_glBlendEquationSeparate(mode, mode); }
+void gl31_glBlendEquationSeparate(GLenum rgb, GLenum alpha)
+{
+    gl31_state_t* s = gl31_state();
+    int i;
+    BE(glBlendEquationSeparate)(rgb, alpha);
+    for (i = 0; i < GL31_MAX_DRAW_BUFFERS; i++) { s->blend_f[i].erg = rgb; s->blend_f[i].ea = alpha; }
+}
+
+/* sin draw_buffers_indexed el backend tiene una unica funcion/ecuacion de mezcla: manda la del primer
+ * buffer activo; si otro buffer activo la tiene distinta, ES no lo puede expresar y se avisa */
+void gl31_render_sync_blendfn(void)
+{
+    gl31_state_t* s = gl31_state();
+    int i, ref = 0, n = max_draw_buffers();
+    unsigned act;
+    if (n > GL31_MAX_DRAW_BUFFERS) n = GL31_MAX_DRAW_BUFFERS;
+    act = active_draw_mask(n);
+    s->idx_div &= ~2u;
+    for (i = 1; i < n; i++) if (memcmp(&s->blend_f[i], &s->blend_f[0], sizeof s->blend_f[0]) != 0) { s->idx_div |= 2u; break; }
+    for (i = 0; i < n; i++) if (act & (1u << i)) { ref = i; break; }
+    BE(glBlendFuncSeparate)(s->blend_f[ref].srgb, s->blend_f[ref].drgb, s->blend_f[ref].sa, s->blend_f[ref].da);
+    BE(glBlendEquationSeparate)(s->blend_f[ref].erg, s->blend_f[ref].ea);
+    for (i = ref + 1; i < n; i++)
+        if ((act & (1u << i)) && memcmp(&s->blend_f[i], &s->blend_f[ref], sizeof s->blend_f[0]) != 0) {
+            gl31_stub_warn("glBlendFunci/glBlendEquationi distinto por buffer (backend sin draw_buffers_indexed)");
+            break;
+        }
+}
 void gl31_glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a) { BE(glBlendColor)(r, g, b, a); }
 
 void gl31_glStencilFunc(GLenum func, GLint ref, GLuint mask) { BE(glStencilFunc)(func, ref, mask); }
@@ -298,7 +437,36 @@ void gl31_glStencilMask(GLuint mask) { BE(glStencilMask)(mask); }
 void gl31_glStencilMaskSeparate(GLenum face, GLuint mask) { BE(glStencilMaskSeparate)(face, mask); }
 
 void gl31_glCullFace(GLenum mode) { BE(glCullFace)(mode); }
-void gl31_glFrontFace(GLenum mode) { BE(glFrontFace)(mode); }
+/* El backend recibe el sentido efectivo: con origen UPPER_LEFT (glClipControl) la Y del clip space
+ * se invierte en el VS, lo que invierte el sentido de giro de las caras. */
+void gl31_front_face_apply(void)
+{
+    gl31_state_t* s = gl31_state();
+    GLenum m = s->front_face_app;
+    if (s->clip_origin == GL_UPPER_LEFT) m = (m == GL_CW) ? GL_CCW : GL_CW;
+    BE(glFrontFace)(m);
+}
+
+void gl31_glFrontFace(GLenum mode)
+{
+    if (mode != GL_CW && mode != GL_CCW) { gl31_set_error(GL_INVALID_ENUM); return; }
+    gl31_state()->front_face_app = mode;
+    gl31_front_face_apply();
+}
+
+/* glClipControl (GL 4.5): GL_ZERO_TO_ONE se logra exactamente con z' = 2z - w en el VS;
+ * GL_UPPER_LEFT invierte Y en el VS y el sentido de las caras. Limitacion: viewport, scissor y
+ * gl_FragCoord siguen en coordenadas de ventana con origen abajo-izquierda. */
+void gl31_glClipControl(GLenum origin, GLenum depth)
+{
+    gl31_state_t* s = gl31_state();
+    if ((origin != GL_LOWER_LEFT && origin != GL_UPPER_LEFT) ||
+        (depth != GL_NEGATIVE_ONE_TO_ONE && depth != GL_ZERO_TO_ONE)) { gl31_set_error(GL_INVALID_ENUM); return; }
+    s->clip_origin = origin;
+    s->clip_depth = depth;
+    gl31_front_face_apply();
+    gl31_lu_bump();
+}
 void gl31_glPolygonOffset(GLfloat factor, GLfloat units) { BE(glPolygonOffset)(factor, units); }
 
 void gl31_glLineWidth(GLfloat width)
@@ -313,8 +481,8 @@ void gl31_glLineWidth(GLfloat width)
 void gl31_glPointSize(GLfloat size)
 {
     if (!(size > 0.0f)) { gl31_set_error(GL_INVALID_VALUE); return; }
-    gl31_state()->point_size = size;
-    gl31_stub_warn("glPointSize (el VS debe escribir gl_PointSize)");
+    gl31_state()->point_size = size;        /* lo aplica el wrapper del VS via lorica_vs */
+    gl31_lu_bump();
 }
 
 void gl31_glPointParameterf(GLenum pname, GLfloat param)
@@ -331,8 +499,7 @@ void gl31_glPointParameterf(GLenum pname, GLfloat param)
                 return;
             }
             s->point_sprite_origin = (GLenum)param;
-            if (s->point_sprite_origin == GL_LOWER_LEFT)
-                gl31_stub_warn("glPointParameter(POINT_SPRITE_COORD_ORIGIN=LOWER_LEFT)");
+            gl31_lu_bump();
             return;
         default:
             gl31_set_error(GL_INVALID_ENUM);
@@ -378,4 +545,8 @@ void gl31_glHint(GLenum target, GLenum mode)
 
 void gl31_glSampleCoverage(GLfloat value, GLboolean invert) { BE(glSampleCoverage)(value, invert); }
 void gl31_glFlush(void)  { BE(glFlush)(); }
-void gl31_glFinish(void) { BE(glFinish)(); }
+void gl31_glFinish(void)
+{
+    BE(glFinish)();
+    gl31_vkq_finish();      /* GL: tras glFinish los resultados de queries anteriores estan disponibles */
+}

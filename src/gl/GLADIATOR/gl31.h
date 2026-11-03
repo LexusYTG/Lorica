@@ -24,6 +24,56 @@
 
 #define GL31_TLS __thread
 
+#ifndef GL_POLYGON_MODE
+#define GL_POLYGON_MODE 0x0B40
+#endif
+#ifndef GL_FILL
+#define GL_POINT 0x1B00
+#define GL_LINE 0x1B01
+#define GL_FILL 0x1B02
+#endif
+#ifndef GL_PROGRAM_POINT_SIZE
+#define GL_PROGRAM_POINT_SIZE 0x8642
+#endif
+#ifndef GL_CLIP_DISTANCE0
+#define GL_CLIP_DISTANCE0 0x3000
+#endif
+#ifndef GL_COLOR_LOGIC_OP
+#define GL_COLOR_LOGIC_OP 0x0BF2
+#endif
+#ifndef GL_FRONT_FACE
+#define GL_FRONT_FACE 0x0B46
+#endif
+#ifndef GL_CLIP_ORIGIN
+#define GL_CLIP_ORIGIN 0x935C
+#define GL_CLIP_DEPTH_MODE 0x935D
+#define GL_NEGATIVE_ONE_TO_ONE 0x935E
+#define GL_ZERO_TO_ONE 0x935F
+#endif
+#ifndef GL_LOWER_LEFT
+#define GL_LOWER_LEFT 0x8CA1
+#define GL_UPPER_LEFT 0x8CA2
+#endif
+#ifndef GL_DEPTH_CLAMP
+#define GL_DEPTH_CLAMP 0x864F
+#endif
+
+#ifndef GL_HANDLE_TYPE_OPAQUE_FD_EXT
+#define GL_HANDLE_TYPE_OPAQUE_FD_EXT 0x9586
+#endif
+#ifndef GL_BUFFER_STORAGE_FLAGS
+#define GL_BUFFER_STORAGE_FLAGS 0x8220
+#define GL_BUFFER_IMMUTABLE_STORAGE 0x821F
+#endif
+#ifndef GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT
+#define GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT 0x00004000
+#endif
+#ifndef GL_BUFFER_ACCESS_FLAGS
+#define GL_BUFFER_ACCESS_FLAGS 0x911F
+#define GL_BUFFER_MAP_LENGTH 0x9120
+#define GL_BUFFER_MAP_OFFSET 0x9121
+#endif
+
 /* tipos de GL desktop ausentes en GLES */
 #ifndef GL_VERSION_1_1
 typedef double GLdouble;
@@ -93,6 +143,28 @@ typedef double GLclampd;
 #endif
 #ifndef GL_FRONT_LEFT
 #define GL_FRONT_LEFT  0x0400
+#ifndef GL_CLAMP_READ_COLOR
+#define GL_CLAMP_READ_COLOR 0x891C
+#endif
+#ifndef GL_PACK_SWAP_BYTES
+#define GL_PACK_SWAP_BYTES 0x0D00
+#define GL_PACK_LSB_FIRST 0x0D01
+#define GL_UNPACK_SWAP_BYTES 0x0CF0
+#define GL_UNPACK_LSB_FIRST 0x0CF1
+#endif
+#ifndef GL_PACK_IMAGE_HEIGHT
+#define GL_PACK_IMAGE_HEIGHT 0x806C
+#define GL_PACK_SKIP_IMAGES 0x806B
+#endif
+#ifndef GL_FIXED_ONLY
+#define GL_FIXED_ONLY 0x891D
+#endif
+#ifndef GL_CLAMP_VERTEX_COLOR
+#define GL_CLAMP_VERTEX_COLOR 0x891A
+#endif
+#ifndef GL_CLAMP_FRAGMENT_COLOR
+#define GL_CLAMP_FRAGMENT_COLOR 0x891B
+#endif
 #define GL_BACK_LEFT   0x0402
 #define GL_FRONT_RIGHT 0x0401
 #define GL_BACK_RIGHT  0x0403
@@ -557,7 +629,12 @@ typedef double GLclampd;
     /* ---- GL 3.3 ---- */ \
     X(void, glQueryCounter, (GLuint,GLenum)) \
     X(void, glGetQueryObjecti64v, (GLuint,GLenum,GLint64*)) \
-    X(void, glGetQueryObjectui64v, (GLuint,GLenum,GLuint64*))
+    X(void, glGetQueryObjectui64v, (GLuint,GLenum,GLuint64*)) \
+    X(void, glBufferStorage, (GLenum, GLsizeiptr, const void*, GLbitfield)) \
+    X(void, glCreateMemoryObjectsEXT, (GLsizei, GLuint*)) \
+    X(void, glDeleteMemoryObjectsEXT, (GLsizei, const GLuint*)) \
+    X(void, glImportMemoryFdEXT, (GLuint, GLuint64, GLenum, GLint)) \
+    X(void, glBufferStorageMemEXT, (GLenum, GLsizeiptr, GLuint, GLuint64))
 
 /* capacidades del backend (detectadas en init) */
 typedef struct {
@@ -594,6 +671,8 @@ typedef struct {
     int debug;                  /* ES 3.2 o KHR_debug */
     int timer;                  /* EXT_disjoint_timer_query: GL_TIME_ELAPSED / glQueryCounter */
     int dual_src;               /* EXT_blend_func_extended: salidas index=1 */
+    int buffer_storage;         /* EXT_buffer_storage: almacenamiento inmutable y mapeo persistente nativo */
+    int memobj, memobj_fd;      /* EXT_memory_object / EXT_memory_object_fd: importar memoria de Vulkan */
 } gl31_caps_t;
 
 extern gl31_caps_t gl31_caps;
@@ -637,22 +716,46 @@ typedef struct {
     GLuint  read_fbo;
     GLuint  renderbuffer;
     gl31_ubo_binding_t ubo[GL31_MAX_UBO_BINDINGS];
+    gl31_ubo_binding_t ssbo[16];                 /* enlaces SSBO de la app (el backend puede tener otros, ver gl31_ssbo_sync) */
+    unsigned           ssbo_clob;                /* indices del backend pisados por una resolucion de bloques */
     GLuint  sampler[GL31_MAX_TEX_UNITS];
     GLboolean prim_restart;
     GLuint    prim_restart_index;
     GLboolean restart_fixed_applied;
     int     xfb_active;            /* transform feedback en curso */
+    int     xfb_paused;            /* ... y en pausa */
+    GLuint  xfb_bound;             /* objeto de transform feedback enlazado (0 = el implicito) */
     /* estado de rasterizacion/fragmento que ES no tiene (gl31_render.c) */
     GLboolean softcap[GL31_MAX_SOFTCAPS];
     GLboolean colormask[GL31_MAX_DRAW_BUFFERS][4];
     GLfloat   point_size;
     GLfloat   point_fade_threshold;
     GLenum    point_sprite_origin;
+    /* glClipControl (GL 4.5) y glDepthClamp emulados con uniforms propios (gl31_shader_link.c) */
+    GLenum    clip_origin;         /* GL_LOWER_LEFT / GL_UPPER_LEFT */
+    GLenum    clip_depth;          /* GL_NEGATIVE_ONE_TO_ONE / GL_ZERO_TO_ONE */
+    GLboolean depth_clamp_soft;    /* GL_DEPTH_CLAMP cuando el backend no tiene EXT_depth_clamp */
+    GLenum    polygon_mode;        /* glPolygonMode (GL_FILL / GL_LINE / GL_POINT) */
+    GLenum    front_face_app;      /* glFrontFace tal como lo pidio la app (el backend recibe el efectivo) */
     /* GL_PACK_* (glPixelStorei); lo usa glReadPixels */
     GLint     pack_alignment, pack_row_length, pack_skip_rows, pack_skip_pixels;
     /* GL_UNPACK_* (glPixelStorei); lo usa la conversion BGRA->RGBA de las subidas de texturas */
     GLint     unpack_alignment, unpack_row_length, unpack_skip_rows, unpack_skip_pixels;
     GLint     unpack_image_height, unpack_skip_images;
+    GLint     pack_image_height, pack_skip_images;      /* lectura 3D (glGetTexImage de 3D/arrays) */
+    GLboolean pack_swap_bytes, pack_lsb_first, unpack_swap_bytes, unpack_lsb_first;
+    GLenum    clamp_read_color;    /* glClampColor(GL_CLAMP_READ_COLOR): FIXED_ONLY por defecto */
+    GLenum    clamp_vertex_color, clamp_fragment_color;
+    /* viewports / scissors / depth ranges indexados (GL 4.1): ES solo tiene el 0. Los demas se guardan para que
+     * las consultas coincidan; solo los usaria un shader que escriba gl_ViewportIndex (necesita geometry shader) */
+    GLfloat   vpi[16][4];
+    GLint     sci[16][4];
+    GLdouble  dri[16][2];
+    GLboolean vpi_set[16], sci_set[16], dri_set[16], sci_enable[16];
+    GLboolean blend_en[GL31_MAX_DRAW_BUFFERS];   /* GL_BLEND por buffer sin draw_buffers_indexed */
+    struct { GLenum srgb, drgb, sa, da, erg, ea; } blend_f[GL31_MAX_DRAW_BUFFERS];   /* funcion/ecuacion por buffer */
+    unsigned  idx_div;                           /* bits: 1 blend / 2 funciones / 4 mascara difieren entre buffers */
+    GLfloat   min_sample_shading;               /* glMinSampleShading (se guarda aunque el backend no lo tenga) */
     GLenum    provoking_vertex;
     GLuint    pipeline;            /* program pipeline enlazada (GL 4.1) */
     int     limits_loaded;
@@ -1216,6 +1319,17 @@ void gl31_glPopDebugGroup(void);
 void gl31_glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar* label);
 void gl31_glGetObjectLabel(GLenum identifier, GLuint name, GLsizei bufSize, GLsizei* length, GLchar* label);
 GLuint gl31_glGetDebugMessageLog(GLuint count, GLsizei bufSize, GLenum* sources, GLenum* types, GLuint* ids, GLenum* severities, GLsizei* lengths, GLchar* messageLog);
+void gl31_render_sync_blend(void);
+void gl31_render_sync_blendfn(void);
+void gl31_render_resync_indexed(void);
+/* glDrawBuffer(s) de desktop con mapeo arbitrario (salida j -> attachment k): FBO proxy en el backend */
+GLuint  gl31_fbo_be_draw(GLuint app_fbo);
+GLenum  gl31_fbo_redir(GLenum target, int* redirected);
+void    gl31_fbo_redir_end(int redirected, int edited);
+int     gl31_fbo_draw_buffer_query(GLenum pname, GLint* out);
+void    gl31_fbo_shutdown_remap(void);
+GLenum  gl31_tex_be_target_of(GLuint id);
+int  gl31_compressed_block(GLenum ifmt, int* bw, int* bh, int* bytes);   /* 1 si es comprimido */
 void gl31_glViewportIndexedf(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h);
 void gl31_glViewportIndexedfv(GLuint index, const GLfloat* v);
 void gl31_glViewportArrayv(GLuint first, GLsizei count, const GLfloat* v);
@@ -1272,6 +1386,42 @@ GLenum gl31_tex_target_of(GLuint id);
 int    gl31_tex_bound_for(GLenum target, GLuint* out);
 GLuint gl31_tex_active_unit(void);
 void  gl31_query_reset(void);
+
+/* ---- reescritura de shaders con uniforms propios (lorica_vs / lorica_vs2 / lorica_fs) ----
+ * Un uniform a cero equivale al comportamiento por defecto de GL, asi un programa que no se
+ * sincronice (pipelines separables) sigue funcionando. */
+typedef struct {
+    int last_vs;      /* este VS es la ultima etapa de vertices: se le inyecta el wrapper de main() */
+    int fs_cd;        /* FS: numero de clip distances emuladas que llegan del VS (0 = ninguna) */
+} gl31_conv_opts_t;
+typedef struct {
+    int cd_n;         /* VS: clip distances emuladas (0 = ninguna) */
+    int lu;           /* el shader lleva uniforms lorica_* */
+    int n_ssbo_unb;   /* bloques SSBO sin layout(binding): se les asigno uno unico (binding inicial de GL = 0) */
+    char ssbo_unb[8][64];
+} gl31_conv_info_t;
+/* glShaderStorageBlockBinding: ES fija el binding en el shader. Cada bloque recibe un binding unico en el
+ * backend y el enlace real se resuelve antes de cada draw/dispatch (gl31_ssbo_sync). */
+void   gl31_ssbo_sync(void);
+void   gl31_ssbo_record(GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
+int    gl31_ssbo_get(GLuint index, GLuint* buffer, GLint64* offset, GLint64* size);
+GLint  gl31_program_ssbo_binding(GLuint program, GLuint block_index, GLint backend_binding);
+void  gl31_glsl_set_opts(const gl31_conv_opts_t* o);      /* vale solo para la siguiente conversion */
+void  gl31_glsl_get_info(gl31_conv_info_t* out);          /* info de la ultima conversion (TLS) */
+void  gl31_xfb_account(GLenum mode, GLsizei count, GLsizei inst);   /* un draw se ha emitido */
+void  gl31_xfb_forget(GLuint id);                                   /* se borro un objeto TF */
+void  gl31_query_account_prims(GLuint64 prims);
+int   gl31_query_target_active(GLenum target);
+int   gl31_program_staged(GLuint program);                          /* tiene geometry / tessellation */
+void  gl31_lu_bump(void);                                 /* el estado que alimenta los uniforms cambio */
+void  gl31_lu_sync(void);
+int   gl31_lu_hidden_count(GLuint program);
+GLuint gl31_lu_app_to_backend(GLuint program, GLuint idx);
+GLuint gl31_lu_backend_to_app(GLuint program, GLuint idx);                                 /* antes de dibujar: sube los uniforms si hace falta */
+void  gl31_glClipControl(GLenum origin, GLenum depth);
+void  gl31_front_face_apply(void);
+void  gl31_buffer_shutdown(void);
+int   gl31_buffer_immutable_info(GLenum target, GLbitfield* flags, int* vk);
 /* ---- GL 3.3 ---- */
 void  gl31_glQueryCounter(GLuint id, GLenum target);
 void  gl31_glGetQueryObjecti64v(GLuint id, GLenum pname, GLint64* params);

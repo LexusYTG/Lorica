@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <stdint.h>
+#include "gl31_vk.h"
+#ifndef GL_POLYGON_MODE
+#define GL_POLYGON_MODE 0x0B40
+#endif
 
 #ifndef GL_QUERY_COUNTER_BITS
 #define GL_QUERY_COUNTER_BITS 0x8864
@@ -31,9 +35,11 @@ enum { Q_SAMPLES, Q_ANY, Q_ANY_CONS, Q_PRIMS_GEN, Q_TF_WRITTEN, Q_TIME, Q_COUNT 
 
 static GL31_TLS GLuint g_active[Q_COUNT];
 
-#define MAX_FAKE 64
-static GLuint g_fake[MAX_FAKE];   /* ids usados con targets no soportados */
-static int    g_nfake;
+/* Queries que el backend no tiene (GL_PRIMITIVES_GENERATED, TIME_ELAPSED sin timer): el resultado se
+ * calcula aqui. PRIMITIVES_GENERATED cuenta las primitivas de cada draw (gl31_xfb_account). */
+typedef struct { GLuint id; GLuint64 result; } fake_t;
+static fake_t* g_fk; static size_t g_nfk, g_cfk;
+static GL31_TLS GLuint g_pg_id;      /* query PRIMITIVES_GENERATED activa */
 
 /* slot: indice interno; be: target del backend; ok: 0 si no existe en GLES */
 static int classify(GLenum target, int* slot, GLenum* be, int* ok)
@@ -57,27 +63,55 @@ static int classify(GLenum target, int* slot, GLenum* be, int* ok)
 /* se llama en gl31_init / gl31_shutdown: los ids falsos y las queries activas no sobreviven al backend */
 void gl31_query_reset(void)
 {
-    g_nfake = 0;
+    g_nfk = 0; g_pg_id = 0;
     memset(g_active, 0, sizeof g_active);
+    gl31_vkq_reset();
 }
 
-static int is_fake(GLuint id)
+static fake_t* fake_find(GLuint id)
 {
-    int i;
-    for (i = 0; i < g_nfake; i++) if (g_fake[i] == id) return 1;
-    return 0;
+    size_t i;
+    for (i = 0; i < g_nfk; i++) if (g_fk[i].id == id) return &g_fk[i];
+    return NULL;
 }
 
-static void fake_add(GLuint id)
+static int is_fake(GLuint id) { return fake_find(id) != NULL; }
+
+static fake_t* fake_add(GLuint id)
 {
-    if (!is_fake(id) && g_nfake < MAX_FAKE) g_fake[g_nfake++] = id;
+    fake_t* f = fake_find(id);
+    if (f) { f->result = 0; return f; }
+    if (g_nfk == g_cfk) {
+        size_t nc = g_cfk ? g_cfk * 2 : 32;
+        fake_t* n = (fake_t*)realloc(g_fk, nc * sizeof *n);
+        if (!n) return NULL;
+        g_fk = n; g_cfk = nc;
+    }
+    f = &g_fk[g_nfk++];
+    f->id = id; f->result = 0;
+    return f;
 }
 
 static void fake_del(GLuint id)
 {
-    int i;
-    for (i = 0; i < g_nfake; i++)
-        if (g_fake[i] == id) { g_fake[i] = g_fake[--g_nfake]; return; }
+    fake_t* f = fake_find(id);
+    if (f) *f = g_fk[--g_nfk];
+}
+
+/* primitivas enviadas por un draw (la lista de GL: puntos, lineas, tiras, lazos, triangulos...) */
+void gl31_query_account_prims(GLuint64 prims)
+{
+    fake_t* f;
+    if (!g_pg_id) return;
+    f = fake_find(g_pg_id);
+    if (f) f->result += prims;
+}
+
+int gl31_query_target_active(GLenum target)
+{
+    int slot, ok; GLenum be;
+    if (!classify(target, &slot, &be, &ok)) return 0;
+    return g_active[slot] != 0;
 }
 
 static int is_active(GLuint id)
@@ -100,6 +134,7 @@ void gl31_glDeleteQueries(GLsizei n, const GLuint* ids)
     for (i = 0; i < n; i++) {
         if (!ids[i]) continue;
         fake_del(ids[i]);
+        gl31_vkq_delete(ids[i]);
         for (k = 0; k < Q_COUNT; k++) if (g_active[k] == ids[i]) g_active[k] = 0;
     }
     BE(glDeleteQueries)(n, ids);
@@ -112,8 +147,13 @@ void gl31_glBeginQuery(GLenum target, GLuint id)
     int slot, ok; GLenum be;
     if (!classify(target, &slot, &be, &ok)) { gl31_set_error(GL_INVALID_ENUM); return; }
     if (!id || g_active[slot])               { gl31_set_error(GL_INVALID_OPERATION); return; }
-    if (!ok) {
-        gl31_stub_warn(target == GL_TIME_ELAPSED ? "GL_TIME_ELAPSED query" : "GL_PRIMITIVES_GENERATED query");
+    if (!ok && target == GL_TIME_ELAPSED && gl31_vkq_ready()) {
+        gl31_vkq_begin(id);                 /* sin EXT_disjoint_timer_query: reloj de la GPU via Vulkan */
+    } else if (!ok && target == GL_PRIMITIVES_GENERATED) {
+        if (!fake_add(id)) { gl31_set_error(GL_OUT_OF_MEMORY); return; }
+        g_pg_id = id;                       /* cuenta las primitivas de cada draw hasta glEndQuery */
+    } else if (!ok) {
+        gl31_stub_warn("GL_TIME_ELAPSED query");
         fake_add(id);
     } else {
         BE(glBeginQuery)(be, id);
@@ -127,6 +167,8 @@ void gl31_glEndQuery(GLenum target)
     if (!classify(target, &slot, &be, &ok)) { gl31_set_error(GL_INVALID_ENUM); return; }
     if (!g_active[slot])                     { gl31_set_error(GL_INVALID_OPERATION); return; }
     if (ok) BE(glEndQuery)(be);
+    else if (target == GL_TIME_ELAPSED && gl31_vkq_owns(g_active[slot])) gl31_vkq_end(g_active[slot]);
+    else if (target == GL_PRIMITIVES_GENERATED) g_pg_id = 0;
     g_active[slot] = 0;
 }
 
@@ -135,7 +177,7 @@ void gl31_glGetQueryiv(GLenum target, GLenum pname, GLint* params)
     int slot, ok; GLenum be;
     if (!params) return;
     if (target == GL_TIMESTAMP) {
-        if (pname == GL_QUERY_COUNTER_BITS) *params = gl31_caps.timer ? 64 : 0;
+        if (pname == GL_QUERY_COUNTER_BITS) *params = (gl31_caps.timer || gl31_vkq_ready()) ? 64 : 0;
         else if (pname == GL_CURRENT_QUERY) *params = 0;
         else gl31_set_error(GL_INVALID_ENUM);
         return;
@@ -143,7 +185,8 @@ void gl31_glGetQueryiv(GLenum target, GLenum pname, GLint* params)
     if (!classify(target, &slot, &be, &ok)) { gl31_set_error(GL_INVALID_ENUM); return; }
     switch (pname) {
         case GL_CURRENT_QUERY:      *params = (GLint)g_active[slot]; break;
-        case GL_QUERY_COUNTER_BITS: *params = !ok ? 0 : (target == GL_TIME_ELAPSED ? 64 : 32); break;
+        case GL_QUERY_COUNTER_BITS: *params = !ok ? ((target == GL_TIME_ELAPSED && gl31_vkq_ready()) ? 64 : 0)
+                                                  : (target == GL_TIME_ELAPSED ? 64 : 32); break;
         default: gl31_set_error(GL_INVALID_ENUM);
     }
 }
@@ -156,7 +199,18 @@ void gl31_glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params)
         gl31_set_error(GL_INVALID_ENUM);
         return;
     }
-    if (is_fake(id)) { *params = (pname == GL_QUERY_RESULT_AVAILABLE) ? 1u : 0u; return; }
+    if (gl31_vkq_owns(id)) {
+        GLuint64 v = 0;
+        gl31_vkq_get(id, pname == GL_QUERY_RESULT, &v);
+        *params = (v > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (GLuint)v;   /* GL satura el resultado de 32 bit */
+        return;
+    }
+    if (is_fake(id)) {
+        fake_t* f = fake_find(id);
+        if (pname == GL_QUERY_RESULT_AVAILABLE) *params = 1u;
+        else *params = (f->result > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (GLuint)f->result;
+        return;
+    }
     BE(glGetQueryObjectuiv)(id, pname, params);
 }
 
@@ -169,7 +223,8 @@ void gl31_glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params)
         gl31_set_error(GL_INVALID_ENUM);
         return;
     }
-    if (is_fake(id)) { *params = (pname == GL_QUERY_RESULT_AVAILABLE) ? 1u : 0u; return; }
+    if (gl31_vkq_owns(id)) { gl31_vkq_get(id, pname == GL_QUERY_RESULT, params); return; }
+    if (is_fake(id)) { *params = (pname == GL_QUERY_RESULT_AVAILABLE) ? 1u : fake_find(id)->result; return; }
     if (gl31_caps.timer && BE(glGetQueryObjectui64v)) { BE(glGetQueryObjectui64v)(id, pname, params); return; }
     {
         GLuint v = 0;
@@ -193,6 +248,8 @@ void gl31_glQueryCounter(GLuint id, GLenum target)
     if (!id || is_active(id))   { gl31_set_error(GL_INVALID_OPERATION); return; }
     if (gl31_caps.timer) {
         BE(glQueryCounter)(id, target);
+    } else if (gl31_vkq_ready()) {
+        gl31_vkq_counter(id);               /* instante en que la GPU termina todo lo anterior */
     } else {
         gl31_stub_warn("glQueryCounter(GL_TIMESTAMP)");
         fake_add(id);
@@ -229,7 +286,7 @@ void gl31_glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
 /* ---------- version / extensiones que ve la app ----------
  * GL 3.2 exige geometry shaders: solo se anuncia si el backend los tiene
  * (ES 3.2 o EXT/OES_geometry_shader). Si no, se anuncia 3.1. */
-static int g_max_major = 3, g_max_minor = 3;     /* tope por defecto: 3.3 (ver GL33.md / GL4.md) */
+static int g_max_major = 3, g_max_minor = 3;     /* tope por defecto: 3.3 (ver documentacion/DOCUMENTACION.md) */
 
 void gl31_set_max_version(int major, int minor)
 {
@@ -237,7 +294,7 @@ void gl31_set_max_version(int major, int minor)
     g_max_major = major; g_max_minor = minor;
 }
 
-/* Requisitos (sin fp64 ni viewport arrays, que ES no tiene; ver GL4.md):
+/* Requisitos (sin fp64 ni viewport arrays, que ES no tiene; ver documentacion/DOCUMENTACION.md):
  *   3.2 / 3.3 geometry shaders (3.3: blend dual y timer query se degradan si el backend no los tiene)
  *   4.0 + tessellation, cube map arrays, sample shading, blend indexado, ES 3.1 (indirect, gather)
  *   4.1 (separate shader objects y program binary vienen con ES 3.1)
@@ -299,7 +356,7 @@ static int x_copy(void)    { return gl31_caps.copy_image; }
 static int x_debug(void)   { return 1; }                  /* KHR_debug se acepta aunque sea sin efecto */
 static int x_geom(void)    { return gl31_caps.geometry; }
 static int x_dual(void)    { return gl31_caps.dual_src; }
-static int x_timer(void)   { return gl31_caps.timer; }
+static int x_timer(void)   { return gl31_caps.timer || gl31_vkq_ready(); }
 static int x_v33(void)     { int M, m; gl31_advertised_version(&M, &m); return M > 3 || m >= 3; }
 static int x_v4(void)      { int M; gl31_advertised_version(&M, NULL); return M >= 4; }
 
@@ -357,7 +414,8 @@ static const ext_t k_ext[] = {
     { "GL_ARB_vertex_type_2_10_10_10_rev", x_v33 },
     { "GL_ARB_blend_func_extended",       x_dual },
     { "GL_ARB_timer_query",               x_timer },
-    /* GL 4.5 (solo DSA; ver GL45.md) */
+    { "GL_ARB_clip_control",              x_always },
+    /* GL 4.5 (solo DSA; ver documentacion/DOCUMENTACION.md) */
     { "GL_ARB_direct_state_access",       x_v33 },
 };
 #define N_EXT_ALL ((int)(sizeof(k_ext) / sizeof(k_ext[0])))
@@ -465,11 +523,15 @@ static int local_integer(GLenum pname, GLint* out)
         case GL_PRIMITIVE_RESTART:         *out = s->prim_restart; return 1;
         case GL_PRIMITIVE_RESTART_INDEX:   *out = (GLint)s->prim_restart_index; return 1;
         case GL_POINT_SPRITE_COORD_ORIGIN: *out = (GLint)s->point_sprite_origin; return 1;
+        case GL_FRONT_FACE:                *out = (GLint)s->front_face_app; return 1;
+        case GL_CLIP_ORIGIN:               *out = (GLint)s->clip_origin; return 1;
+        case GL_CLIP_DEPTH_MODE:           *out = (GLint)s->clip_depth; return 1;
         case GL_PROVOKING_VERTEX:          *out = (GLint)s->provoking_vertex; return 1;
         case GL_DRAW_FRAMEBUFFER_BINDING:  *out = (GLint)s->draw_fbo; return 1;
         case GL_READ_FRAMEBUFFER_BINDING:  *out = (GLint)s->read_fbo; return 1;
         default: break;
     }
+    if (gl31_fbo_draw_buffer_query(pname, out)) return 1;
     if (gl31_tex_get_binding(pname, out)) return 1;          /* TEXTURE_BINDING_1D/RECT/... */
     if (gl31_soft_cap_get(pname, &b)) { *out = b; return 1; }
     return 0;
@@ -478,6 +540,7 @@ static int local_integer(GLenum pname, GLint* out)
 void gl31_glGetIntegerv(GLenum pname, GLint* data)
 {
     if (!data) return;
+    if (pname == GL_POLYGON_MODE) { data[0] = data[1] = (GLint)gl31_state()->polygon_mode; return; }
     if (local_integer(pname, data)) return;
     BE(glGetIntegerv)(pname, data);
 }
@@ -487,6 +550,7 @@ void gl31_glGetInteger64v(GLenum pname, GLint64* data)
     GLint v = 0;
     if (!data) return;
     if (local_integer(pname, &v)) { *data = (GLint64)v; return; }
+    if (pname == GL_TIMESTAMP && !gl31_caps.timer && gl31_vkq_ready()) { *data = gl31_vkq_now(); return; }
     BE(glGetInteger64v)(pname, data);
 }
 
@@ -504,6 +568,14 @@ void gl31_glGetInteger64i_v(GLenum target, GLuint index, GLint64* data)
             else if (target == GL_UNIFORM_BUFFER_START) *data = (GLint64)s->ubo[index].offset;
             else                                        *data = (GLint64)s->ubo[index].size;
             return;
+        case GL_SHADER_STORAGE_BUFFER_BINDING:
+        case GL_SHADER_STORAGE_BUFFER_START:
+        case GL_SHADER_STORAGE_BUFFER_SIZE: {
+            GLuint buf; GLint64 off, sz;
+            if (!gl31_caps.es31 || !gl31_ssbo_get(index, &buf, &off, &sz)) { BE(glGetInteger64i_v)(target, index, data); return; }
+            *data = target == GL_SHADER_STORAGE_BUFFER_BINDING ? (GLint64)buf : target == GL_SHADER_STORAGE_BUFFER_START ? off : sz;
+            return;
+        }
         default:
             BE(glGetInteger64i_v)(target, index, data);
     }
@@ -524,6 +596,7 @@ void gl31_glGetFloatv(GLenum pname, GLfloat* data)
     switch (pname) {
         case GL_POINT_SIZE:                *data = gl31_state()->point_size; return;
         case GL_POINT_FADE_THRESHOLD_SIZE: *data = gl31_state()->point_fade_threshold; return;
+        case 0x8C37:                       *data = gl31_state()->min_sample_shading; return;   /* MIN_SAMPLE_SHADING_VALUE */
         default:                           BE(glGetFloatv)(pname, data);
     }
 }

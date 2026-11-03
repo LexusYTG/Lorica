@@ -31,7 +31,10 @@ SOURCES = \
 	gl31_texture.c \
 	gl31_uniform.c \
 	gl31_vao.c \
-	gl31_xfb.c
+	gl31_xfb.c \
+	gl31_vk.c \
+	gl31_idxgen.c \
+	../../vk/lvk.c
 
 OBJECTS    = $(SOURCES:.c=.o)
 STATIC_LIB = liblorica_gl31.a

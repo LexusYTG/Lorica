@@ -2,8 +2,8 @@
  *
  * ES no tiene acceso directo por nombre: cada funcion enlaza el objeto, llama a la version
  * clasica (ya traducida por Lorica) y restaura el enlace anterior. El estado enlazado que ve
- * la app no cambia. Limitaciones: ver GL45.md (cube maps en TextureSubImage3D/GetTextureImage
- * solo sin compresion, sin GetTextureSubImage, sin glClipControl). */
+ * la app no cambia. Limitaciones: ver documentacion/DOCUMENTACION.md (cube maps en
+ * TextureSubImage3D/GetTextureImage solo sin compresion, sin GetTextureSubImage). */
 #include "gl31.h"
 #include <string.h>
 

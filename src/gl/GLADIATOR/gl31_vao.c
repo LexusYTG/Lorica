@@ -29,6 +29,7 @@ static vao_t* vao_get(GLuint id)
     v = &g_vao[g_nv++];
     memset(v, 0, sizeof *v);
     v->id = id;
+    { int i; for (i = 0; i < GL31_MAX_ATTRIBS; i++) v->a[i].binding = (GLuint)i; }   /* GL: binding por defecto = indice */
     return v;
 }
 
@@ -183,20 +184,39 @@ void gl31_glVertexAttribDivisor(GLuint idx, GLuint divisor)
     { vao_t* v = cur_vao(); if (v && idx < GL31_MAX_ATTRIBS) { v->b[v->a[idx].binding].divisor = divisor; resync(v, v->a[idx].binding); } }
 }
 
-/* ---- GL 4.3: ARB_vertex_attrib_binding (nativo en ES 3.1) ---- */
-static int need_es31(const char* fn)
+/* ---- GL 4.3: ARB_vertex_attrib_binding (nativo en ES 3.1) ----
+ * Sin ES 3.1 se emula con glVertexAttribPointer/IPointer + glVertexAttribDivisor: el formato, el binding
+ * y el buffer de cada atributo ya se guardan por VAO, asi que cada cambio re-aplica los atributos
+ * afectados. Un stride 0 de glBindVertexBuffer significa "siempre el mismo dato" (no "empaquetado"):
+ * se consigue con un divisor enorme, de modo que en un draw sin instancias lee siempre el elemento 0. */
+static void emu_apply(vao_t* v, GLuint idx)
 {
-    if (gl31_caps.es31) return 1;
-    gl31_stub_warn(fn);
-    gl31_set_error(GL_INVALID_OPERATION);
-    return 0;
+    gl31_state_t* s = gl31_state();
+    gl31_attrib_t* a = &v->a[idx];
+    const gl31_vbind_t* bd = &v->b[a->binding];
+    GLsizei stride = bd->stride;
+    GLuint div = bd->divisor;
+    if (a->size <= 0) return;                         /* aun sin formato: nada que aplicar */
+    BE(glBindBuffer)(GL_ARRAY_BUFFER, bd->buffer);
+    if (stride == 0) div = 0xFFFFFFFFu;
+    if (a->integer) BE(glVertexAttribIPointer)(idx, a->size, a->type, stride, (const void*)((uintptr_t)bd->offset + a->reloff));
+    else            BE(glVertexAttribPointer)(idx, a->size, a->type, a->normalized, stride, (const void*)((uintptr_t)bd->offset + a->reloff));
+    BE(glVertexAttribDivisor)(idx, div);
+    BE(glBindBuffer)(GL_ARRAY_BUFFER, s->array_buffer);
+}
+
+static void emu_apply_binding(vao_t* v, GLuint binding)
+{
+    GLuint i;
+    for (i = 0; i < GL31_MAX_ATTRIBS; i++) if (v->a[i].binding == binding) emu_apply(v, i);
 }
 
 static int check_binding(GLuint b)
 {
     GLint max = 16;
     BE(glGetIntegerv)(GL_MAX_VERTEX_ATTRIB_BINDINGS, &max);
-    if (max <= 0) max = 16;
+    if (gl31_caps.es31 == 0) max = 16;                /* ES 3.0 no tiene la consulta: GL 4.3 garantiza 16 */
+    else if (max <= 0) max = 16;
     if (max > GL31_MAX_ATTRIBS) max = GL31_MAX_ATTRIBS;
     if ((GLint)b >= max) { gl31_set_error(GL_INVALID_VALUE); return 0; }
     return 1;
@@ -205,27 +225,27 @@ static int check_binding(GLuint b)
 void gl31_glVertexAttribFormat(GLuint idx, GLint size, GLenum type, GLboolean norm, GLuint reloff)
 {
     vao_t* v;
-    if (!need_es31("glVertexAttribFormat (backend sin ES 3.1)")) return;
     if (!check_vao() || !check_index(idx)) return;
-    BE(glVertexAttribFormat)(idx, size, type, norm, reloff);
+    if (gl31_caps.es31) BE(glVertexAttribFormat)(idx, size, type, norm, reloff);
     v = cur_vao();
     if (!v) return;
     v->a[idx].size = size; v->a[idx].type = type; v->a[idx].normalized = norm;
     v->a[idx].integer = 0; v->a[idx].reloff = reloff;
     resync(v, v->a[idx].binding);
+    if (!gl31_caps.es31) emu_apply(v, idx);
 }
 
 void gl31_glVertexAttribIFormat(GLuint idx, GLint size, GLenum type, GLuint reloff)
 {
     vao_t* v;
-    if (!need_es31("glVertexAttribIFormat (backend sin ES 3.1)")) return;
     if (!check_vao() || !check_index(idx)) return;
-    BE(glVertexAttribIFormat)(idx, size, type, reloff);
+    if (gl31_caps.es31) BE(glVertexAttribIFormat)(idx, size, type, reloff);
     v = cur_vao();
     if (!v) return;
     v->a[idx].size = size; v->a[idx].type = type; v->a[idx].normalized = 0;
     v->a[idx].integer = 1; v->a[idx].reloff = reloff;
     resync(v, v->a[idx].binding);
+    if (!gl31_caps.es31) emu_apply(v, idx);
 }
 
 /* los atributos de doble precision no existen en ES */
@@ -239,38 +259,38 @@ void gl31_glVertexAttribLFormat(GLuint idx, GLint size, GLenum type, GLuint relo
 void gl31_glVertexAttribBinding(GLuint idx, GLuint binding)
 {
     vao_t* v;
-    if (!need_es31("glVertexAttribBinding (backend sin ES 3.1)")) return;
     if (!check_vao() || !check_index(idx) || !check_binding(binding)) return;
-    BE(glVertexAttribBinding)(idx, binding);
+    if (gl31_caps.es31) BE(glVertexAttribBinding)(idx, binding);
     v = cur_vao();
     if (!v) return;
     v->a[idx].binding = binding;
     resync(v, binding);
+    if (!gl31_caps.es31) emu_apply(v, idx);
 }
 
 void gl31_glBindVertexBuffer(GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride)
 {
     vao_t* v;
-    if (!need_es31("glBindVertexBuffer (backend sin ES 3.1)")) return;
     if (!check_vao() || !check_binding(binding)) return;
     if (offset < 0 || stride < 0) { gl31_set_error(GL_INVALID_VALUE); return; }
-    BE(glBindVertexBuffer)(binding, buffer, offset, stride);
+    if (gl31_caps.es31) BE(glBindVertexBuffer)(binding, buffer, offset, stride);
     v = cur_vao();
     if (!v) return;
     v->b[binding].buffer = buffer; v->b[binding].offset = offset; v->b[binding].stride = stride;
     resync(v, binding);
+    if (!gl31_caps.es31) emu_apply_binding(v, binding);
 }
 
 void gl31_glVertexBindingDivisor(GLuint binding, GLuint divisor)
 {
     vao_t* v;
-    if (!need_es31("glVertexBindingDivisor (backend sin ES 3.1)")) return;
     if (!check_vao() || !check_binding(binding)) return;
-    BE(glVertexBindingDivisor)(binding, divisor);
+    if (gl31_caps.es31) BE(glVertexBindingDivisor)(binding, divisor);
     v = cur_vao();
     if (!v) return;
     v->b[binding].divisor = divisor;
     resync(v, binding);
+    if (!gl31_caps.es31) emu_apply_binding(v, binding);
 }
 
 /* GL 4.4: varios bindings de una vez (emulado con un bucle) */

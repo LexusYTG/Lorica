@@ -30,3 +30,8 @@ compile_commands.json
 Testing/
 /loritest
 core
+
+# Salida de tools/build_linux.sh y binarios de tests/hybrid
+build_linux/
+tests/hybrid/test_*
+!tests/hybrid/test_*.c
