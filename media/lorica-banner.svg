@@ -78,7 +78,7 @@
 
   <!-- title block -->
   <text x="560" y="206" font-family="'Trebuchet MS','Segoe UI',Verdana,sans-serif" font-size="118" font-weight="800" letter-spacing="14" fill="url(#title)">LORICA</text>
-  <text x="564" y="252" font-family="'Segoe UI',Verdana,sans-serif" font-size="30" fill="#c9d3ea">Desktop OpenGL on OpenGL ES</text>
+  <text x="564" y="252" font-family="'Segoe UI',Verdana,sans-serif" font-size="30" fill="#c9d3ea">Version 1.4.5 is here</text>
 
   <!-- API chips -->
   <g font-family="'Courier New',Courier,monospace" font-size="22" font-weight="700">
@@ -88,5 +88,5 @@
     <rect x="760" y="282" width="176" height="42" rx="8" fill="#10183a" stroke="#22e55a" stroke-width="2"/>
     <text x="848" y="311" text-anchor="middle" fill="#8ff0ac">OpenGL ES 3.x</text>
   </g>
-  <text x="564" y="364" font-family="'Courier New',Courier,monospace" font-size="18" fill="#6f7ca3">glDrawArrays(GL_TRIANGLES, 0, 3);</text>
+  <text x="564" y="364" font-family="'Courier New',Courier,monospace" font-size="18" fill="#6f7ca3">apuntando alto);</text>
 </svg>
